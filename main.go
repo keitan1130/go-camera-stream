@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"embed"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"math/big"
@@ -29,13 +28,9 @@ var upgrader = websocket.Upgrader{
 }
 
 type StreamRoom struct {
-	mutex         sync.RWMutex
-	lastFrame     []byte
-	lastFrameAt   time.Time
-	lastFrameSize int
-	frameCount    uint64
-	cameraClients int
-	obsClients    map[chan []byte]bool
+	mutex      sync.RWMutex
+	lastFrame  []byte
+	obsClients map[chan []byte]bool
 }
 
 func (r *StreamRoom) broadcast(chunk []byte) {
@@ -89,95 +84,23 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	id := getStreamID(r)
 	room := getRoom(id)
 
-	room.mutex.Lock()
-	room.cameraClients++
-	room.mutex.Unlock()
-
 	fmt.Printf("[カメラ接続] ID: %s が配信を開始しました\n", id)
-
-	defer func() {
-		room.mutex.Lock()
-		if room.cameraClients > 0 {
-			room.cameraClients--
-		}
-		room.mutex.Unlock()
-	}()
 
 	for {
 		messageType, payload, err := conn.ReadMessage()
 		if err != nil {
-			fmt.Printf("[カメラ切断] ID: %s が切断されました: %v\n", id, err)
+			fmt.Printf("[カメラ切断] ID: %s が切断されました\n", id)
 			break
 		}
 
 		if messageType == websocket.BinaryMessage && len(payload) > 0 {
 			room.mutex.Lock()
 			room.lastFrame = payload
-			room.lastFrameAt = time.Now()
-			room.lastFrameSize = len(payload)
-			room.frameCount++
-			frameCount := room.frameCount
 			room.mutex.Unlock()
-
-			if frameCount == 1 || frameCount%100 == 0 {
-				fmt.Printf("[フレーム受信] ID: %s count=%d size=%d bytes\n", id, frameCount, len(payload))
-			}
 
 			room.broadcast(payload)
 		}
 	}
-}
-
-func formatTime(t time.Time) string {
-	if t.IsZero() {
-		return "-"
-	}
-	return t.Format(time.RFC3339)
-}
-
-func handleStatus(w http.ResponseWriter, r *http.Request) {
-	type roomStatus struct {
-		ID            string `json:"id"`
-		CameraClients int    `json:"camera_clients"`
-		OBSClients    int    `json:"obs_clients"`
-		FrameCount    uint64 `json:"frame_count"`
-		LastFrameAt   string `json:"last_frame_at"`
-		LastFrameSize int    `json:"last_frame_size"`
-	}
-
-	idFilter := strings.TrimSpace(r.URL.Query().Get("id"))
-	roomsMutex.Lock()
-	ids := make([]string, 0, len(rooms))
-	if idFilter != "" {
-		ids = append(ids, idFilter)
-	} else {
-		for id := range rooms {
-			ids = append(ids, id)
-		}
-	}
-	roomsMutex.Unlock()
-
-	statuses := make([]roomStatus, 0, len(ids))
-	for _, id := range ids {
-		room := getRoom(id)
-		room.mutex.RLock()
-		statuses = append(statuses, roomStatus{
-			ID:            id,
-			CameraClients: room.cameraClients,
-			OBSClients:    len(room.obsClients),
-			FrameCount:    room.frameCount,
-			LastFrameAt:   formatTime(room.lastFrameAt),
-			LastFrameSize: room.lastFrameSize,
-		})
-		room.mutex.RUnlock()
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if idFilter != "" && len(statuses) == 1 {
-		_ = json.NewEncoder(w).Encode(statuses[0])
-		return
-	}
-	_ = json.NewEncoder(w).Encode(statuses)
 }
 
 func handleVideoStream(w http.ResponseWriter, r *http.Request) {
@@ -201,14 +124,9 @@ func handleVideoStream(w http.ResponseWriter, r *http.Request) {
 	room.mutex.Lock()
 	room.obsClients[clientChan] = true
 	frame := room.lastFrame
-	lastFrameAt := room.lastFrameAt
-	frameCount := room.frameCount
-	cameraClients := room.cameraClients
 	room.mutex.Unlock()
 
-	fmt.Printf("[OBS接続] ID: %s の映像の視聴が開始されました camera_clients=%d frame_count=%d last_frame_at=%s\n", id, cameraClients, frameCount, formatTime(lastFrameAt))
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
+	fmt.Printf("[OBS接続] ID: %s の映像の視聴が開始されました\n", id)
 
 	defer func() {
 		room.mutex.Lock()
@@ -331,9 +249,7 @@ func main() {
 	}
 
 	appMux.HandleFunc("/ws", handleWebSocket)
-	appMux.HandleFunc("/status", handleStatus)
 	streamMux.HandleFunc("/stream", handleVideoStream)
-	streamMux.HandleFunc("/status", handleStatus)
 
 	cert, err := loadTLSCert(publicHost)
 	if err != nil {
