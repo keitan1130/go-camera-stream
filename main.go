@@ -108,6 +108,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 // OBS等に向けて映像を配信する処理
 func handleVideoStream(w http.ResponseWriter, r *http.Request) {
+
+	fmt.Println("STREAM REQUEST RECEIVED")
+
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
