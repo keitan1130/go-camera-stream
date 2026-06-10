@@ -181,36 +181,17 @@ func generateSelfSignedCert(localIP string) (tls.Certificate, error) {
 		},
 		NotBefore: time.Now(),
 		NotAfter:  time.Now().Add(365 * 24 * time.Hour),
-
-		KeyUsage: x509.KeyUsageDigitalSignature |
-			x509.KeyUsageKeyEncipherment,
-
-		ExtKeyUsage: []x509.ExtKeyUsage{
-			x509.ExtKeyUsageServerAuth,
-		},
-
+		KeyUsage: x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
 	}
 
-	// SANへ登録
-	template.IPAddresses = []net.IP{
-		net.ParseIP("127.0.0.1"),
-	}
-
+	template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
 	if ip := net.ParseIP(localIP); ip != nil {
-		template.IPAddresses = append(
-			template.IPAddresses,
-			ip,
-		)
+		template.IPAddresses = append(template.IPAddresses, ip)
 	}
 
-	derBytes, err := x509.CreateCertificate(
-		rand.Reader,
-		&template,
-		&template,
-		&priv.PublicKey,
-		priv,
-	)
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
@@ -220,6 +201,7 @@ func generateSelfSignedCert(localIP string) (tls.Certificate, error) {
 		PrivateKey:  priv,
 	}, nil
 }
+
 
 func main() {
 	subFS, err := fs.Sub(frontendFS, "frontend/dist")
@@ -232,12 +214,7 @@ func main() {
 	http.HandleFunc("/ws", handleWebSocket)
 	http.HandleFunc("/stream", handleVideoStream)
 
-	cert, err := generateSelfSignedCert()
-	if err != nil {
-		panic(err)
-	}
-
-	appPort := os.Getenv("APP_PORT")
+	cert, err := generateSelfSignedCert()appPort := os.Getenv("APP_PORT")
 	if appPort == "" {
 		appPort = "8080"
 	}
@@ -256,7 +233,12 @@ func main() {
 		}
 	}
 	if localIP == "" {
-		localIP = "localhost"
+		localIP = "127.0.0.1"
+	}
+
+	cert, err := generateSelfSignedCert(localIP)
+	if err != nil {
+		panic(err)
 	}
 
 	go func() {
