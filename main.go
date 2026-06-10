@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,7 +30,7 @@ var upgrader = websocket.Upgrader{
 // === 拡張: IDごとに映像ストリームを管理する構造体 ===
 type StreamRoom struct {
 	mutex      sync.RWMutex
-	initChunk  []byte                  // その部屋の動画初期化ヘッダー
+	lastFrame  []byte                  // 最後に受信したJPEGフレーム
 	obsClients map[chan []byte]bool // その部屋に繋がっているOBS一覧
 }
 
@@ -66,6 +67,14 @@ func getRoom(id string) *StreamRoom {
 	return newRoom
 }
 
+func getStreamID(r *http.Request) string {
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		return "default"
+	}
+	return id
+}
+
 // iPhoneから映像を受け取る処理
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -75,18 +84,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// クエリパラメータから "id" を取得 (無ければ "default")
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		id = "default"
-	}
+	id := getStreamID(r)
 	room := getRoom(id)
 
 	fmt.Printf("[カメラ接続] ID: %s が配信を開始しました\n", id)
-
-	room.mutex.Lock()
-	room.initChunk = nil // カメラが繋ぎ直されたらヘッダーを初期化
-	room.mutex.Unlock()
 
 	for {
 		messageType, payload, err := conn.ReadMessage()
@@ -96,10 +97,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 		if messageType == websocket.BinaryMessage {
 			room.mutex.Lock()
-			if room.initChunk == nil {
-				room.initChunk = payload
-				fmt.Printf("[ヘッダー保持] ID: %s の動画ヘッダーを保存しました\n", id)
-			}
+			room.lastFrame = payload
 			room.mutex.Unlock()
 
 			// この部屋のOBSだけに映像を分配
@@ -110,22 +108,20 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 // OBS等に向けて映像を配信する処理
 func handleVideoStream(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "video/webm")
+	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 
-	// クエリパラメータから "id" を取得 (無ければ "default")
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		id = "default"
-	}
+	id := getStreamID(r)
 	room := getRoom(id)
 
 	clientChan := make(chan []byte, 100)
 
 	room.mutex.Lock()
 	room.obsClients[clientChan] = true
-	savedHeader := room.initChunk
+	frame := room.lastFrame
 	room.mutex.Unlock()
 
 	fmt.Printf("[OBS接続] ID: %s の映像の視聴が開始されました\n", id)
@@ -138,21 +134,34 @@ func handleVideoStream(w http.ResponseWriter, r *http.Request) {
 		fmt.Printf("[OBS切断] ID: %s の視聴が終了しました\n", id)
 	}()
 
-	// 最初に対象の部屋のヘッダーを送信
-	if savedHeader != nil {
-		w.Write(savedHeader)
+	writeFrame := func(img []byte) error {
+		header := fmt.Sprintf("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n", len(img))
+		if _, err := w.Write([]byte(header)); err != nil {
+			return err
+		}
+		if _, err := w.Write(img); err != nil {
+			return err
+		}
+		if _, err := w.Write([]byte("\r\n")); err != nil {
+			return err
+		}
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
+		}
+		return nil
+	}
+
+	// 最初に最新フレームがあれば送信
+	if frame != nil {
+		if err := writeFrame(frame); err != nil {
+			return
 		}
 	}
 
+	// 以降、チャンネルから届くフレームを送信
 	for chunk := range clientChan {
-		_, err := w.Write(chunk)
-		if err != nil {
+		if err := writeFrame(chunk); err != nil {
 			break
-		}
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
 		}
 	}
 }
