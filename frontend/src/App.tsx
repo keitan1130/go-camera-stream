@@ -49,7 +49,7 @@ export default function App() {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
 
-      setCamStatus('適用中...');
+      setCamStatus('適用中');
 
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
