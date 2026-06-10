@@ -1,0 +1,34 @@
+# Git関連
+.git
+.gitignore
+
+# 環境変数（セキュリティのためコンテナに直接含めない）
+.env
+
+# Docker設定ファイル自体
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Goのローカルビルドファイル
+server
+*.exe
+
+# フロントエンドのローカル依存関係とビルドファイル
+# ※Dockerコンテナの中で npm install と npm run build を行うため、
+# 手元のPCにあるこれらはコンテナ内に送る必要がありません。
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# ログファイル等
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# エディタやOSのキャッシュ
+.vscode/
+.idea/
+.DS_Store
