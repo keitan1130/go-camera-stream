@@ -214,7 +214,7 @@ func main() {
 	http.HandleFunc("/ws", handleWebSocket)
 	http.HandleFunc("/stream", handleVideoStream)
 
-	cert, err := generateSelfSignedCert()appPort := os.Getenv("APP_PORT")
+	appPort := os.Getenv("APP_PORT")
 	if appPort == "" {
 		appPort = "8080"
 	}
