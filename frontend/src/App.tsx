@@ -8,6 +8,7 @@ export default function App() {
   const [status, setStatus] = useState<string>('初期化中...');
   const lastSentAtRef = useRef<number>(0);
   const encodingRef = useRef<boolean>(false);
+  const sentFramesRef = useRef<number>(0);
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -32,10 +33,12 @@ export default function App() {
           video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }
         });
 
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
+        const video = videoRef.current;
+        if (video) {
+          video.srcObject = stream;
+          await video.play();
         }
-        setStatus(`ストリーミング中 [ID: ${streamId}]...`);
+        setStatus(`カメラ起動完了 [ID: ${streamId}]。フレーム送信待機中...`);
       } catch (err: any) {
         setStatus(`カメラ起動失敗: ${err.message}`);
       }
@@ -46,20 +49,24 @@ export default function App() {
     const frameIntervalMs = 100;
     let animationFrameId: number;
     const sendFrame = (now: number) => {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      const ws = wsRef.current;
+
       if (
-        videoRef.current &&
-        canvasRef.current &&
-        wsRef.current?.readyState === WebSocket.OPEN &&
-        videoRef.current.readyState === videoRef.current.HAVE_CURRENT_DATA &&
+        video &&
+        canvas &&
+        ws?.readyState === WebSocket.OPEN &&
+        video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        video.videoWidth > 0 &&
+        video.videoHeight > 0 &&
         !encodingRef.current &&
         now - lastSentAtRef.current >= frameIntervalMs &&
-        wsRef.current.bufferedAmount < 2 * 1024 * 1024
+        ws.bufferedAmount < 2 * 1024 * 1024
       ) {
-        const video = videoRef.current;
-        const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d');
 
-        if (canvas.width !== video.videoWidth) {
+        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
         }
@@ -72,6 +79,12 @@ export default function App() {
             encodingRef.current = false;
             if (blob && wsRef.current?.readyState === WebSocket.OPEN) {
               wsRef.current.send(blob);
+              sentFramesRef.current += 1;
+              if (sentFramesRef.current === 1 || sentFramesRef.current % 30 === 0) {
+                setStatus(`ストリーミング中 [ID: ${streamId}] 送信フレーム: ${sentFramesRef.current}`);
+              }
+            } else if (!blob) {
+              setStatus('JPEG生成失敗: canvas.toBlob が空を返しました');
             }
           }, 'image/jpeg', 0.7);
         }
