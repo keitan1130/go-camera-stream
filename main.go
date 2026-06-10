@@ -227,7 +227,7 @@ func main() {
 	}
 
 	go func() {
-		fmt.Printf("=== OBS用ストリームURL例: http://%s:%s/stream?id=2 ===\n", localIP, streamPort)
+		fmt.Printf("=== OBS用ストリームURL例: http://%s:%s/stream?id=1 ===\n", localIP, streamPort)
 		if err := http.ListenAndServe(":"+streamPort, nil); err != nil {
 			fmt.Println("HTTP Server Error:", err)
 		}
@@ -239,7 +239,7 @@ func main() {
 	}
 
 	fmt.Println("=== Server Started ===")
-	fmt.Printf("iPhoneアクセス用URL例: https://%s:%s/?id=2\n", localIP, appPort)
+	fmt.Printf("iPhoneアクセス用URL例: https://%s:%s/?id=1\n", localIP, appPort)
 	fmt.Println("======================")
 
 	if err := server.ListenAndServeTLS("", ""); err != nil {
