@@ -7,5 +7,6 @@ services:
     environment:
       - APP_PORT=${APP_PORT:-8080}
       - STREAM_PORT=${STREAM_PORT:-8081}
+      - PUBLIC_HOST=${PUBLIC_HOST:-127.0.0.1}
     restart: unless-stopped
     tty: true

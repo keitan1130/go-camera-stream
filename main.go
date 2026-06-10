@@ -104,8 +104,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleVideoStream(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("STREAM REQUEST RECEIVED")
-
 	w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
@@ -224,16 +222,6 @@ func loadTLSCert(publicHost string) (tls.Certificate, error) {
 }
 
 func main() {
-	subFS, err := fs.Sub(frontendFS, "frontend/dist")
-	if err != nil {
-		fmt.Println("Warning: frontend/dist not found. Please build frontend first.")
-	} else {
-		http.Handle("/", http.FileServer(http.FS(subFS)))
-	}
-
-	http.HandleFunc("/ws", handleWebSocket)
-	http.HandleFunc("/stream", handleVideoStream)
-
 	appPort := os.Getenv("APP_PORT")
 	if appPort == "" {
 		appPort = "8080"
@@ -250,25 +238,46 @@ func main() {
 		publicHost = "127.0.0.1"
 	}
 
+	appMux := http.NewServeMux()
+	streamMux := http.NewServeMux()
+
+	subFS, err := fs.Sub(frontendFS, "frontend/dist")
+	if err != nil {
+		fmt.Println("Warning: frontend/dist not found. Please build frontend first.")
+	} else {
+		appMux.Handle("/", http.FileServer(http.FS(subFS)))
+	}
+
+	appMux.HandleFunc("/ws", handleWebSocket)
+	streamMux.HandleFunc("/stream", handleVideoStream)
+
 	cert, err := loadTLSCert(publicHost)
 	if err != nil {
 		panic(err)
 	}
 
-	go func() {
-		fmt.Printf("=== OBS用ストリームURL例: http://%s:%s/stream?id=1 ===\n", publicHost, streamPort)
-		if err := http.ListenAndServe(":"+streamPort, nil); err != nil {
-			fmt.Println("HTTP Server Error:", err)
-		}
-	}()
+	streamURL := fmt.Sprintf("http://%s:%s/stream?id=1", publicHost, streamPort)
+	if streamPort == appPort {
+		appMux.HandleFunc("/stream", handleVideoStream)
+		streamURL = fmt.Sprintf("https://%s:%s/stream?id=1", publicHost, appPort)
+		fmt.Println("STREAM_PORT equals APP_PORT; /stream will be served over HTTPS on the app server.")
+	} else {
+		go func() {
+			if err := http.ListenAndServe(":"+streamPort, streamMux); err != nil {
+				fmt.Println("HTTP Stream Server Error:", err)
+			}
+		}()
+	}
 
 	server := &http.Server{
 		Addr:      ":" + appPort,
+		Handler:   appMux,
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}},
 	}
 
 	fmt.Println("=== Server Started ===")
 	fmt.Printf("iPhoneアクセス用URL例: https://%s:%s/?id=1\n", publicHost, appPort)
+	fmt.Printf("OBS/ブラウザ確認用ストリームURL例: %s\n", streamURL)
 	fmt.Println("======================")
 
 	if err := server.ListenAndServeTLS("", ""); err != nil {
