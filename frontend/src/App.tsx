@@ -8,13 +8,18 @@ export default function App() {
   const [status, setStatus] = useState<string>('初期化中...');
 
   useEffect(() => {
+    // 1. ブラウザのURLから "?id=xxx" の値を取得する
+    const urlParams = new URLSearchParams(window.location.search);
+    const streamId = urlParams.get('id') || 'default'; // 指定がなければ default
+
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+    // 2. WebSocketの接続先URLの末尾にパラメータを付与
+    const wsUrl = `${wsProtocol}//${window.location.host}/ws?id=${streamId}`;
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
-    ws.onopen = () => setStatus('接続完了。カメラを起動します...');
+    ws.onopen = () => setStatus(`接続完了 [ID: ${streamId}]。カメラを起動します...`);
     ws.onerror = () => setStatus('接続エラー');
     ws.onclose = () => setStatus('切断されました');
 
@@ -29,25 +34,22 @@ export default function App() {
           videoRef.current.srcObject = stream;
         }
 
-        // iOS(Safari)とPC(Chrome等)の両方で動くようにフォーマットを自動選択
         let mimeType = 'video/webm; codecs=vp8';
         if (!MediaRecorder.isTypeSupported(mimeType)) {
-          mimeType = 'video/mp4'; // iOS Safari用のフォールバック
+          mimeType = 'video/mp4';
         }
 
         const recorder = new MediaRecorder(stream, { mimeType });
         mediaRecorderRef.current = recorder;
 
-        // エンコーダが動画の破片（チャンク）を作るたびにWebSocketで送信
         recorder.ondataavailable = (event) => {
           if (event.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
             wsRef.current.send(event.data);
           }
         };
 
-        // 100ミリ秒（0.1秒）ごとに動画を切り取って送信し続ける
         recorder.start(100);
-        setStatus(`ストリーミング中 (${mimeType})...`);
+        setStatus(`ストリーミング中 [ID: ${streamId}] (${mimeType})`);
 
       } catch (err: any) {
         setStatus(`カメラ起動失敗: ${err.message}`);
