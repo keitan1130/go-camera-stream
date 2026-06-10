@@ -6,6 +6,8 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const [status, setStatus] = useState<string>('初期化中...');
+  const lastSentAtRef = useRef<number>(0);
+  const encodingRef = useRef<boolean>(false);
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -19,7 +21,9 @@ export default function App() {
 
     ws.onopen = () => setStatus(`接続完了 [ID: ${streamId}]。カメラを起動します...`);
     ws.onerror = () => setStatus('接続エラー');
-    ws.onclose = () => setStatus('切断されました');
+    ws.onclose = (event) => {
+      setStatus(`切断されました [code: ${event.code}, reason: ${event.reason || 'none'}]`);
+    };
 
     async function startCamera() {
       try {
@@ -39,13 +43,17 @@ export default function App() {
 
     startCamera();
 
+    const frameIntervalMs = 100;
     let animationFrameId: number;
-    const sendFrame = () => {
+    const sendFrame = (now: number) => {
       if (
         videoRef.current &&
         canvasRef.current &&
         wsRef.current?.readyState === WebSocket.OPEN &&
-        videoRef.current.readyState === videoRef.current.HAVE_CURRENT_DATA
+        videoRef.current.readyState === videoRef.current.HAVE_CURRENT_DATA &&
+        !encodingRef.current &&
+        now - lastSentAtRef.current >= frameIntervalMs &&
+        wsRef.current.bufferedAmount < 2 * 1024 * 1024
       ) {
         const video = videoRef.current;
         const canvas = canvasRef.current;
@@ -57,12 +65,15 @@ export default function App() {
         }
 
         if (ctx) {
+          lastSentAtRef.current = now;
+          encodingRef.current = true;
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           canvas.toBlob((blob) => {
+            encodingRef.current = false;
             if (blob && wsRef.current?.readyState === WebSocket.OPEN) {
               wsRef.current.send(blob);
             }
-          }, 'image/jpeg', 0.8);
+          }, 'image/jpeg', 0.7);
         }
       }
       animationFrameId = requestAnimationFrame(sendFrame);

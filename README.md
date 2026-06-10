@@ -101,3 +101,40 @@ https://<PUBLIC_HOST>:<APP_PORT>/stream?id=3
 ```
 
 この場合、`http://<PUBLIC_HOST>:<APP_PORT>/stream?id=3` は使えません。`APP_PORT` はHTTPS用ポートなので、HTTPでアクセスすると接続が成立せず、ブラウザ上では読み込み中のままに見えることがあります。
+
+## サーバー側の確認方法
+
+ストリームURLへ接続しても映像が出ない場合は、まずサーバーがフレームを受信しているか確認してください。
+
+```bash
+curl -s http://127.0.0.1:<STREAM_PORT>/status?id=1
+```
+
+例:
+
+```bash
+curl -s http://127.0.0.1:61001/status?id=1
+```
+
+見るべき項目:
+
+- `camera_clients`: `1` 以上ならカメラページのWebSocketが接続されています。
+- `frame_count`: 増えていればカメラからJPEGフレームを受信できています。
+- `last_frame_at`: 最後にフレームを受信した時刻です。
+- `obs_clients`: `/stream` を開いている視聴クライアント数です。
+
+`camera_clients` が `0` の場合は、カメラ端末で `https://<PUBLIC_HOST>:<APP_PORT>/?id=1` を開き、証明書警告とカメラ権限を許可してください。
+
+`camera_clients` が `1` 以上で `frame_count` が `0` の場合は、WebSocket接続はできていますが、ブラウザ側でカメラ取得またはフレーム送信に失敗しています。カメラ画面が `ストリーミング中 [ID: 1]...` になっているか確認してください。
+
+`frame_count` が増えているのに映像が出ない場合は、視聴側URLの `id` がカメラ側と一致しているか確認してください。
+
+ログでも次を確認できます。
+
+```text
+[カメラ接続] ID: 1 が配信を開始しました
+[フレーム受信] ID: 1 count=1 size=... bytes
+[OBS接続] ID: 1 の映像の視聴が開始されました camera_clients=1 frame_count=...
+```
+
+`curl -v -N http://127.0.0.1:<STREAM_PORT>/stream?id=1` は、フレーム未受信でもHTTPヘッダーまでは返ります。本文が出ない場合は `frame_count` を確認してください。
