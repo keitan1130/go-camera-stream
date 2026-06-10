@@ -168,7 +168,7 @@ func handleVideoStream(w http.ResponseWriter, r *http.Request) {
 
 // --- 以下、main関数や証明書生成はそのまま ---
 
-func generateSelfSignedCert() (tls.Certificate, error) {
+func generateSelfSignedCert(localIP string) (tls.Certificate, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return tls.Certificate{}, err
@@ -176,17 +176,41 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{Organization: []string{"Local Streamer"}},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
-		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		Subject: pkix.Name{
+			Organization: []string{"Local Streamer"},
+		},
+		NotBefore: time.Now(),
+		NotAfter:  time.Now().Add(365 * 24 * time.Hour),
+
+		KeyUsage: x509.KeyUsageDigitalSignature |
+			x509.KeyUsageKeyEncipherment,
+
+		ExtKeyUsage: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageServerAuth,
+		},
+
 		BasicConstraintsValid: true,
 	}
 
-	template.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")}
+	// SANへ登録
+	template.IPAddresses = []net.IP{
+		net.ParseIP("127.0.0.1"),
+	}
 
-	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if ip := net.ParseIP(localIP); ip != nil {
+		template.IPAddresses = append(
+			template.IPAddresses,
+			ip,
+		)
+	}
+
+	derBytes, err := x509.CreateCertificate(
+		rand.Reader,
+		&template,
+		&template,
+		&priv.PublicKey,
+		priv,
+	)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
