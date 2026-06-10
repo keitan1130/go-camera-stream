@@ -3,8 +3,8 @@ import './App.css';
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const [status, setStatus] = useState<string>('初期化中...');
 
   useEffect(() => {
@@ -24,10 +24,31 @@ export default function App() {
           audio: false,
           video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }
         });
+
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
-        setStatus('ストリーミング中...');
+
+        // iOS(Safari)とPC(Chrome等)の両方で動くようにフォーマットを自動選択
+        let mimeType = 'video/webm; codecs=vp8';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'video/mp4'; // iOS Safari用のフォールバック
+        }
+
+        const recorder = new MediaRecorder(stream, { mimeType });
+        mediaRecorderRef.current = recorder;
+
+        // エンコーダが動画の破片（チャンク）を作るたびにWebSocketで送信
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(event.data);
+          }
+        };
+
+        // 100ミリ秒（0.1秒）ごとに動画を切り取って送信し続ける
+        recorder.start(100);
+        setStatus(`ストリーミング中 (${mimeType})...`);
+
       } catch (err: any) {
         setStatus(`カメラ起動失敗: ${err.message}`);
       }
@@ -35,40 +56,11 @@ export default function App() {
 
     startCamera();
 
-    let animationFrameId: number;
-    const sendFrame = () => {
-      if (
-        videoRef.current &&
-        canvasRef.current &&
-        wsRef.current?.readyState === WebSocket.OPEN &&
-        videoRef.current.readyState === videoRef.current.HAVE_CURRENT_DATA
-      ) {
-        const video = videoRef.current;
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
-
-        if (canvas.width !== video.videoWidth) {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-        }
-
-        if (ctx) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          canvas.toBlob((blob) => {
-            if (blob && wsRef.current?.readyState === WebSocket.OPEN) {
-              wsRef.current.send(blob);
-            }
-          }, 'image/jpeg', 0.8);
-        }
-      }
-      animationFrameId = requestAnimationFrame(sendFrame);
-    };
-
-    animationFrameId = requestAnimationFrame(sendFrame);
-
     return () => {
-      cancelAnimationFrame(animationFrameId);
       ws.close();
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
       if (videoRef.current && videoRef.current.srcObject) {
         (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
       }
@@ -86,10 +78,6 @@ export default function App() {
         muted
         playsInline
         className="video-stream"
-      />
-      <canvas
-        ref={canvasRef}
-        className="hidden-canvas"
       />
     </div>
   );
