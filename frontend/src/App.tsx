@@ -178,8 +178,10 @@ function ViewerMode() {
       pc.addTransceiver('video', { direction: 'recvonly' });
 
       pc.ontrack = (e) => {
-        if (videoRef.current && e.streams[0]) {
-          videoRef.current.srcObject = e.streams[0];
+        console.log("映像データを受信しました！", e.track.kind); // F12で確認するためのログ
+        if (videoRef.current) {
+          // streams[0]が空っぽだった場合は、新しくMediaStreamを作って映像を流し込む
+          videoRef.current.srcObject = e.streams[0] || new MediaStream([e.track]);
         }
       };
 
