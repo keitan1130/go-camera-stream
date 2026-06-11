@@ -211,7 +211,7 @@ function ViewerMode() {
 
   return (
     <div className="app-container" style={{ backgroundColor: 'transparent' }}>
-      <video ref={videoRef} autoPlay playsInline className="video-stream" />
+      <video ref={videoRef} autoPlay muted playsInline className="video-stream" />
     </div>
   );
 }
