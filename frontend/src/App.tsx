@@ -106,9 +106,11 @@ function CameraMode() {
         // ★重要: WebRTCの通信を切らずに映像トラックだけを新しい画質のものに差し替える
         const newVideoTrack = stream.getVideoTracks()[0];
         if (pcRef.current && newVideoTrack) {
-          const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
+          // 修正: 初期状態では track が null なので、1つ目の sender を直接取得します
+          const sender = pcRef.current.getSenders()[0];
           if (sender) {
             await sender.replaceTrack(newVideoTrack);
+            console.log("カメラ映像をWebRTCに流し込みました！");
           }
         }
 
