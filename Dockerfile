@@ -11,9 +11,9 @@ FROM golang:alpine AS backend-builder
 WORKDIR /app
 COPY go.mod go.sum* ./
 RUN go mod download
-COPY main.go ./
+COPY *.go ./
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
-RUN go build -o server main.go
+RUN go build -o server .
 
 # Stage 3: 実行用コンテナ
 FROM alpine:latest
