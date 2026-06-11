@@ -19,11 +19,12 @@ export default function App() {
 }
 
 // ==========================================
-// カメラモード（iPhone側）
+// カメラモード（iPhone側: 映像を送信する）
 // ==========================================
 function CameraMode() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const [wsStatus, setWsStatus] = useState('通信: 初期化中');
   const [camStatus, setCamStatus] = useState('待機中');
@@ -32,40 +33,57 @@ function CameraMode() {
   const [selectedFps, setSelectedFps] = useState(FPS_OPTIONS[1]);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // 1. 通信とWebRTCの初期設定（初回のみ実行）
+  // WebRTC接続を新規作成し、視聴者へOfferを送信する関数
+  const createPeerConnectionAndSendOffer = async () => {
+    if (pcRef.current) pcRef.current.close();
+
+    const pc = new RTCPeerConnection(rtcConfig);
+    pcRef.current = pc;
+
+    // 現在のカメラ映像トラックがあれば追加する
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => {
+        pc.addTrack(track, streamRef.current!);
+      });
+    }
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate && wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ role: 'camera', type: 'candidate', candidate: e.candidate }));
+      }
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ role: 'camera', type: 'offer', sdp: offer }));
+    }
+  };
+
+  // 1. WebSocketシグナリングサーバーへの接続
   useEffect(() => {
     const streamId = new URLSearchParams(window.location.search).get('id') || 'default';
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws?id=${encodeURIComponent(streamId)}`);
+    wsRef.current = ws;
 
-    ws.onopen = async () => {
+    ws.onopen = () => {
       setWsStatus(`通信: 接続完了 [ID: ${streamId}]`);
-
-      const pc = new RTCPeerConnection(rtcConfig);
-      pcRef.current = pc;
-
-      // 映像を送るための枠(Transceiver)をあらかじめ用意しておく
-      pc.addTransceiver('video', {
-        direction: 'sendonly',
-        sendEncodings: [
-          { maxBitrate: 5000000 }
-        ]
-      });
-
-      pc.onicecandidate = (e) => {
-        if (e.candidate) {
-          ws.send(JSON.stringify({ role: 'camera', type: 'candidate', candidate: e.candidate }));
-        }
-      };
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      ws.send(JSON.stringify({ role: 'camera', type: 'offer', sdp: offer }));
+      // 部屋に「カメラが参加した」ことを知らせる
+      ws.send(JSON.stringify({ role: 'camera', type: 'join' }));
+      // 既に視聴者がいる場合を想定してOfferを送信する
+      createPeerConnectionAndSendOffer();
     };
 
     ws.onmessage = async (event) => {
       const msg = JSON.parse(event.data);
-      if (msg.type === 'answer' && pcRef.current) {
+      if (msg.role === 'camera') return; // 自分自身のメッセージは無視
+
+      if (msg.type === 'join' && msg.role === 'viewer') {
+        // 視聴者が新しく参加(またはOBSリロード)した => 接続を作り直してOfferを送信
+        console.log("視聴者の参加を検知しました。接続を再構築します。");
+        createPeerConnectionAndSendOffer();
+      } else if (msg.type === 'answer' && pcRef.current) {
         await pcRef.current.setRemoteDescription(msg.sdp);
       } else if (msg.type === 'candidate' && pcRef.current) {
         await pcRef.current.addIceCandidate(msg.candidate);
@@ -81,7 +99,7 @@ function CameraMode() {
     };
   }, []);
 
-  // 2. カメラの起動と設定変更処理（解像度・FPS変更時に実行）
+  // 2. カメラの起動と設定変更処理
   useEffect(() => {
     async function updateCamera() {
       setCamStatus('適用中');
@@ -96,36 +114,32 @@ function CameraMode() {
           }
         });
 
-        // 古いカメラ映像を停止
         if (streamRef.current) {
           streamRef.current.getTracks().forEach(track => track.stop());
         }
         streamRef.current = stream;
 
-        // 画面に表示
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
         }
 
-        // ★重要: WebRTCの通信を切らずに映像トラックだけを新しい画質のものに差し替える
+        // WebRTCの通信が確立済みなら、トラックだけを差し替える
         const newVideoTrack = stream.getVideoTracks()[0];
         if (pcRef.current && newVideoTrack) {
-          // 修正: 初期状態では track が null なので、1つ目の sender を直接取得します
-          const sender = pcRef.current.getSenders()[0];
+          const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
           if (sender) {
             await sender.replaceTrack(newVideoTrack);
-            console.log("カメラ映像をWebRTCに流し込みました！");
+          } else {
+            pcRef.current.addTrack(newVideoTrack, stream);
           }
         }
-
         setCamStatus('動作中');
       } catch (err) {
         setCamStatus('起動失敗');
         console.error("Camera Error:", err);
       }
     }
-
     updateCamera();
 
     return () => {
@@ -170,51 +184,65 @@ function CameraMode() {
 }
 
 // ==========================================
-// 視聴モード（OBS / ブラウザ側）
+// 視聴モード（OBS / ブラウザ側: 映像を受信する）
 // ==========================================
 function ViewerMode() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
 
   useEffect(() => {
     const streamId = new URLSearchParams(window.location.search).get('id') || 'default';
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws?id=${encodeURIComponent(streamId)}`);
-    const pc = new RTCPeerConnection(rtcConfig);
 
-    ws.onopen = async () => {
+    // カメラ側からOfferが来たときに接続を作る関数
+    const createPeerConnection = () => {
+      if (pcRef.current) pcRef.current.close();
+      const pc = new RTCPeerConnection(rtcConfig);
+      pcRef.current = pc;
+
+      // 受信専用として準備
       pc.addTransceiver('video', { direction: 'recvonly' });
 
       pc.ontrack = (e) => {
-        console.log("映像データを受信しました！", e.track.kind); // F12で確認するためのログ
+        console.log("映像データを受信しました！");
         if (videoRef.current) {
-          // streams[0]が空っぽだった場合は、新しくMediaStreamを作って映像を流し込む
           videoRef.current.srcObject = e.streams[0] || new MediaStream([e.track]);
         }
       };
 
       pc.onicecandidate = (e) => {
-        if (e.candidate) {
+        if (e.candidate && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ role: 'viewer', type: 'candidate', candidate: e.candidate }));
         }
       };
+      return pc;
+    };
 
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      ws.send(JSON.stringify({ role: 'viewer', type: 'offer', sdp: offer }));
+    ws.onopen = () => {
+      // 部屋に「視聴者が参加した」ことを知らせ、カメラからのOfferを待つ
+      ws.send(JSON.stringify({ role: 'viewer', type: 'join' }));
     };
 
     ws.onmessage = async (event) => {
       const msg = JSON.parse(event.data);
-      if (msg.type === 'answer') {
+      if (msg.role === 'viewer') return;
+
+      if (msg.type === 'offer') {
+        // カメラからOfferが届いた => PCを作り、Answerを返す
+        const pc = createPeerConnection();
         await pc.setRemoteDescription(msg.sdp);
-      } else if (msg.type === 'candidate') {
-        await pc.addIceCandidate(msg.candidate);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        ws.send(JSON.stringify({ role: 'viewer', type: 'answer', sdp: answer }));
+      } else if (msg.type === 'candidate' && pcRef.current) {
+        await pcRef.current.addIceCandidate(msg.candidate);
       }
     };
 
     return () => {
       ws.close();
-      pc.close();
+      pcRef.current?.close();
     };
   }, []);
 

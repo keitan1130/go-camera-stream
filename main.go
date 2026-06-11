@@ -16,11 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"strconv"
 
 	"github.com/gorilla/websocket"
-	"github.com/pion/webrtc/v3"
-	"github.com/pion/rtcp"
 )
 
 //go:embed frontend/dist/*
@@ -30,21 +27,16 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// SFU: 部屋ごとの映像トラックを保持
-var (
-	tracks     = make(map[string]*webrtc.TrackLocalStaticRTP)
-	sfuMutex   sync.RWMutex
-	udpPortMin uint16 = 50000
-	udpPortMax uint16 = 50020
-)
-
-// シグナリング用メッセージ
-type SignalingMsg struct {
-	Role      string                     `json:"role"`
-	Type      string                     `json:"type"`
-	SDP       *webrtc.SessionDescription `json:"sdp,omitempty"`
-	Candidate *webrtc.ICECandidateInit   `json:"candidate,omitempty"`
+// シグナリング: 部屋（ID）ごとの接続クライアントを管理
+type Room struct {
+	clients map[*websocket.Conn]string // websocket接続 -> 役割("camera" or "viewer")
+	mutex   sync.RWMutex
 }
+
+var (
+	rooms      = make(map[string]*Room)
+	roomsMutex sync.RWMutex
+)
 
 func getStreamID(r *http.Request) string {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
@@ -63,109 +55,64 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	roomID := getStreamID(r)
-	var pc *webrtc.PeerConnection
 
-	// STUNサーバーの設定
-	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{{URLs: []string{"stun:stun.l.google.com:19302"}}},
+	// 部屋の取得または作成
+	roomsMutex.Lock()
+	if rooms[roomID] == nil {
+		rooms[roomID] = &Room{
+			clients: make(map[*websocket.Conn]string),
+		}
 	}
+	room := rooms[roomID]
+	roomsMutex.Unlock()
 
+	// 接続を部屋に登録
+	room.mutex.Lock()
+	room.clients[conn] = "unknown"
+	room.mutex.Unlock()
+
+	// 切断時の処理
+	defer func() {
+		room.mutex.Lock()
+		delete(room.clients, conn)
+		isEmpty := len(room.clients) == 0
+		room.mutex.Unlock()
+
+		if isEmpty {
+			roomsMutex.Lock()
+			delete(rooms, roomID)
+			roomsMutex.Unlock()
+		}
+	}()
+
+	// メッセージの受信と中継（シグナリング）
 	for {
-		var msg SignalingMsg
+		var msg map[string]interface{}
 		if err := conn.ReadJSON(&msg); err != nil {
 			break
 		}
 
-		if msg.Type == "offer" {
-			m := &webrtc.MediaEngine{}
-			if err := m.RegisterDefaultCodecs(); err != nil {
-				fmt.Println("Codec Error:", err)
-			}
-			s := webrtc.SettingEngine{}
-
-			s.SetEphemeralUDPPortRange(udpPortMin, udpPortMax)
-
-			api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithSettingEngine(s))
-			pc, err = api.NewPeerConnection(config)
-			if err != nil {
-				continue
-			}
-
-			// 経路候補(ICE)が見つかったら相手に送り返す
-			pc.OnICECandidate(func(c *webrtc.ICECandidate) {
-				if c == nil {
-					return
-				}
-				jsonCandidate := c.ToJSON()
-				conn.WriteJSON(SignalingMsg{Type: "candidate", Candidate: &jsonCandidate})
-			})
-
-			if msg.Role == "camera" {
-				fmt.Printf("[SFU] ID: %s のカメラが接続しました\n", roomID)
-
-				// カメラから送られてきた映像を受け取る処理
-				pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-					// 定期的にキーフレーム(PLI)を要求して、映像が崩壊したままになるのを防ぐ
-					go func() {
-						ticker := time.NewTicker(time.Second * 3) // 3秒ごとに要求（頻度は環境に合わせて調整）
-						defer ticker.Stop()
-						for range ticker.C {
-							if rtcpErr := pc.WriteRTCP([]rtcp.Packet{
-								&rtcp.PictureLossIndication{MediaSSRC: uint32(track.SSRC())},
-							}); rtcpErr != nil {
-								return // 接続が切れたら終了
-							}
-						}
-					}()
-					sfuMutex.Lock()
-					localTrack, _ := webrtc.NewTrackLocalStaticRTP(track.Codec().RTPCodecCapability, "video", "pion")
-					tracks[roomID] = localTrack
-					sfuMutex.Unlock()
-
-					// 受信したパケットをそのまま中継用トラックへ流し込む
-					rtpBuf := make([]byte, 1500)
-					for {
-						i, _, readErr := track.Read(rtpBuf)
-						if readErr != nil {
-							break
-						}
-						sfuMutex.RLock()
-						if t, ok := tracks[roomID]; ok && t != nil {
-							t.Write(rtpBuf[:i])
-						}
-						sfuMutex.RUnlock()
-					}
-				})
-
-			} else if msg.Role == "viewer" {
-				fmt.Printf("[SFU] ID: %s の視聴者が接続しました\n", roomID)
-
-				// 視聴者には保存されているカメラトラックを渡す
-				sfuMutex.RLock()
-				if t, ok := tracks[roomID]; ok && t != nil {
-					pc.AddTrack(t)
-				}
-				sfuMutex.RUnlock()
-			}
-
-			// Offerに対するAnswerを作成して返す
-			pc.SetRemoteDescription(*msg.SDP)
-			answer, _ := pc.CreateAnswer(nil)
-			pc.SetLocalDescription(answer)
-			conn.WriteJSON(SignalingMsg{Type: "answer", SDP: &answer})
-
-		} else if msg.Type == "candidate" && pc != nil {
-			pc.AddICECandidate(*msg.Candidate)
+		// 初回メッセージでRole(役割)を登録
+		role, _ := msg["role"].(string)
+		if role != "" {
+			room.mutex.Lock()
+			room.clients[conn] = role
+			room.mutex.Unlock()
 		}
-	}
 
-	if pc != nil {
-		pc.Close()
+		// 同じ部屋の「自分以外」かつ「違う役割（カメラ⇔視聴者）」のクライアントにメッセージを転送
+		room.mutex.RLock()
+		for c, rRole := range room.clients {
+			if c != conn && rRole != role {
+				c.WriteJSON(msg)
+			}
+		}
+		room.mutex.RUnlock()
 	}
 }
 
 // ---------------------------------------------------------
-// 証明書・サーバー起動（変更なし）
+// 証明書・サーバー起動
 // ---------------------------------------------------------
 func generateSelfSignedCert(publicHost string) (tls.Certificate, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -203,17 +150,6 @@ func loadTLSCert(publicHost string) (tls.Certificate, error) {
 }
 
 func main() {
-
-	if minStr := os.Getenv("UDP_PORT_MIN"); minStr != "" {
-		if min, err := strconv.Atoi(minStr); err == nil {
-			udpPortMin = uint16(min)
-		}
-	}
-	if maxStr := os.Getenv("UDP_PORT_MAX"); maxStr != "" {
-		if max, err := strconv.Atoi(maxStr); err == nil {
-			udpPortMax = uint16(max)
-		}
-	}
 	appPort := os.Getenv("APP_PORT")
 	if appPort == "" {
 		appPort = "8080"
@@ -231,7 +167,6 @@ func main() {
 		appMux.Handle("/", http.FileServer(http.FS(subFS)))
 	}
 
-	// エンドポイントは WebSocket 用の /ws のみ
 	appMux.HandleFunc("/ws", handleWebSocket)
 
 	cert, err := loadTLSCert(publicHost)
@@ -244,10 +179,10 @@ func main() {
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}},
 	}
 
-	fmt.Println("=== WebRTC SFU Server Started ===")
+	fmt.Println("=== WebRTC P2P Signaling Server Started ===")
 	fmt.Printf("カメラ用URL: https://%s:%s/?id=1\n", publicHost, appPort)
 	fmt.Printf("OBSブラウザソース用URL: https://%s:%s/?id=1&mode=viewer\n", publicHost, appPort)
-	fmt.Println("=================================")
+	fmt.Println("===========================================")
 
 	if err := server.ListenAndServeTLS("", ""); err != nil {
 		panic(err)
