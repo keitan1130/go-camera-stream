@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"strconv"
 
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v3"
@@ -30,8 +31,10 @@ var upgrader = websocket.Upgrader{
 
 // SFU: 部屋ごとの映像トラックを保持
 var (
-	tracks   = make(map[string]*webrtc.TrackLocalStaticRTP)
-	sfuMutex sync.RWMutex
+	tracks     = make(map[string]*webrtc.TrackLocalStaticRTP)
+	sfuMutex   sync.RWMutex
+	udpPortMin uint16 = 50000
+	udpPortMax uint16 = 50020
 )
 
 // シグナリング用メッセージ
@@ -73,7 +76,16 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if msg.Type == "offer" {
-			pc, err = webrtc.NewPeerConnection(config)
+			m := &webrtc.MediaEngine{}
+			if err := m.RegisterDefaultCodecs(); err != nil {
+				fmt.Println("Codec Error:", err)
+			}
+			s := webrtc.SettingEngine{}
+
+			s.SetEphemeralUDPPortRange(udpPortMin, udpPortMax)
+
+			api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithSettingEngine(s))
+			pc, err = api.NewPeerConnection(config)
 			if err != nil {
 				continue
 			}
@@ -178,6 +190,17 @@ func loadTLSCert(publicHost string) (tls.Certificate, error) {
 }
 
 func main() {
+
+	if minStr := os.Getenv("UDP_PORT_MIN"); minStr != "" {
+		if min, err := strconv.Atoi(minStr); err == nil {
+			udpPortMin = uint16(min)
+		}
+	}
+	if maxStr := os.Getenv("UDP_PORT_MAX"); maxStr != "" {
+		if max, err := strconv.Atoi(maxStr); err == nil {
+			udpPortMax = uint16(max)
+		}
+	}
 	appPort := os.Getenv("APP_PORT")
 	if appPort == "" {
 		appPort = "8080"

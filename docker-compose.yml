@@ -1,10 +1,11 @@
 services:
   camera-stream:
     build: .
-    ports:
-      - "${APP_PORT:-8080}:${APP_PORT:-8080}"
+    network_mode: "host"
     environment:
-      - APP_PORT=${APP_PORT:-8080}
-      - PUBLIC_HOST=${PUBLIC_HOST:-127.0.0.1}
+      - APP_PORT=${APP_PORT:-61000}
+      - PUBLIC_HOST=${PUBLIC_HOST:-192.168.11.200}
+      - UDP_PORT_MIN=${UDP_PORT_MIN:-50000}
+      - UDP_PORT_MAX=${UDP_PORT_MAX:-50020}
     restart: unless-stopped
     tty: true
