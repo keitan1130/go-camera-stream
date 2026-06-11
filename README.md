@@ -1,103 +1,130 @@
-# go-camera-stream
+# WebRTC SFU Camera Streamer
 
-iPhoneなどのブラウザでカメラ映像を取得し、WebSocket経由でGoサーバーへ送り、MJPEGストリームとして配信するローカル向けアプリです。
+スマートフォン（iPhone等）のカメラ映像を、超低遅延でPC（OBSブラウザソース等）へ複数同時配信するためのWebRTC（SFU型）ストリーミングサーバーです。
 
-## 仕組み
+Go言語（Pion WebRTC）によるシグナリングおよびメディア中継サーバーと、Reactによるフロントエンドで構成されています。
 
-- カメラ入力: `https://<PUBLIC_HOST>:<APP_PORT>/?id=<ID>`
-- ストリーム出力: `http://<PUBLIC_HOST>:<STREAM_PORT>/stream?id=<ID>`
-- `id` が同じカメラ入力とストリーム出力が接続されます。
-- ブラウザのカメラAPIはHTTPSが必要なため、カメラ入力側はHTTPSで起動します。
+---
+
+## アクセスURL
+
+サーバー起動後、以下のURLにアクセスして利用します。
+※IPアドレス部分は、環境変数 `PUBLIC_HOST` の設定値や、サーバーマシンの実際のローカルIPに読み替えてください。
+
+### 1. カメラ配信側（スマートフォン等）
+映像を配信するデバイスで以下のURLを開きます。
+**※必ずこちらを先に開いて、配信を開始してください。**
+
+```text
+https://[サーバーのIPアドレス]:8080/?id=1
+
+```
+
+*(例: `https://192.168.1.100:8080/?id=1`)*
+
+### 2. 視聴側（OBS / PCブラウザ）
+
+映像を受信したいPC、またはOBS Studioの「ブラウザソース」で以下のURLを開きます（`&mode=viewer` が必要です）。視聴者は何人でも同時接続可能です。
+
+```text
+https://[サーバーのIPアドレス]:8080/?id=1&mode=viewer
+
+```
+
+*(例: `https://192.168.1.100:8080/?id=1&mode=viewer`)*
+
+> **注意:** セキュリティ保護のため、カメラやマイクにアクセスするには **HTTPS接続** が必須です。本サーバーは起動時に自己署名証明書（オレオレ証明書）を自動生成するため、ブラウザで開いた際に「安全ではありません」という警告が出ます。「詳細設定」から「(安全ではない)サイトへ進む」を選択してアクセスしてください。
+
+---
+
+## 本番環境（Dockerを用いた起動）
+
+DockerとDocker Composeがインストールされている環境であれば、最も簡単に起動できます。
+
+### 1. 依存関係の整理（初回のみ）
+
+ローカルマシン上でPion WebRTCの依存関係を整理します。
+
+```bash
+go mod tidy
+
+```
+
+### 2. 環境変数の設定（任意）
+
+`.env.example` をコピーして `.env` ファイルを作成し、ご自身のネットワーク環境に合わせてIPアドレス等を設定してください。
+
+```bash
+cp .env.example .env
+
+```
+
+### 3. ビルドと起動
+
+```bash
+# バックグラウンドでビルドして起動
+docker compose up -d --build
+
+# ログを確認する場合
+docker compose logs -f
+
+```
+
+---
+
+## 開発環境（ローカル開発での起動）
+
+コードを直接編集しながら開発を行う場合の手順です。Go (1.20以上) と Node.js (v20推奨) が必要です。
+
+### 1. フロントエンド（React）のビルド
+
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+
+```
+
+*※Goサーバーは `frontend/dist` ディレクトリの中身を静的ファイルとして配信するため、フロントエンドを変更した際は必ずビルドが必要です。*
+
+### 2. バックエンド（Go）の起動
+
+```bash
+# 依存パッケージのダウンロード
+go mod download
+
+# サーバーの起動
+go run main.go
+
+```
+
+*※デフォルトでは `localhost:8080` で起動します。ローカルネットワーク上の他の端末からアクセスしたい場合は、環境変数をつけて起動してください。*
+
+```bash
+PUBLIC_HOST=192.168.1.100 go run main.go
+
+```
+
+---
 
 ## 環境変数
 
-`.env.example` を例として `.env` を作成し、自分のLAN環境に合わせて編集してください。
+`.env` または起動時のコマンドラインで以下の環境変数を設定できます。
 
-```bash
-cp .env.example .env
-```
+| 変数名 | デフォルト値 | 説明 |
+| --- | --- | --- |
+| `APP_PORT` | `8080` | Webサーバー、WebSocket、および静的ファイルの配信ポートです。 |
+| `PUBLIC_HOST` | `127.0.0.1` | 外部からアクセスする際のIPアドレス（例: `192.168.1.100`）。自己署名証明書の生成にも使用されます。 |
+| `TLS_CERT_FILE` | (なし) | 正規のSSL証明書を使用する場合の証明書ファイルのパス。指定がない場合は自己署名証明書が自動生成されます。 |
+| `TLS_KEY_FILE` | (なし) | 正規のSSL証明書を使用する場合の秘密鍵ファイルのパス。 |
 
-設定値:
+## プロジェクト構成
 
-- `APP_PORT`: HTTPSのカメラ入力画面を配信するポート
-- `STREAM_PORT`: HTTPのMJPEGストリームを配信するポート
-- `PUBLIC_HOST`: iPhoneやOBSからアクセスするPCのLAN内IPアドレスまたはホスト名
+* `main.go`: Go言語によるSFUサーバーおよびWebサーバー。
+* `frontend/`: React + Vite によるフロントエンドアプリケーション。
+* `src/App.tsx`: カメラ側と視聴側の画面切り替え、WebRTCの制御ロジック。
+* `src/App.css`: UIのスタイリング。
 
-Docker Composeはプロジェクト直下の `.env` を自動で読み込み、`docker-compose.yml` のポート公開とコンテナ環境変数に反映します。
 
-## 開発方法
-
-### フロントエンド
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-フロントエンドだけをViteで開発する場合は、Goサーバー側のWebSocketエンドポイントとは別ポートになります。本番に近い確認は、次の「ローカル起動」を使ってください。
-
-### ローカル起動
-
-```bash
-cd frontend
-npm install
-npm run build
-
-cd ..
-set -a
-. ./.env
-set +a
-go run main.go
-```
-
-## ビルド方法
-
-### ローカルバイナリ
-
-```bash
-cd frontend
-npm install
-npm run build
-
-cd ..
-go build -o camera-stream main.go
-```
-
-起動:
-
-```bash
-set -a
-. ./.env
-set +a
-./camera-stream
-```
-
-### Docker
-
-```bash
-cp .env.example .env
-# .env を編集
-docker compose up --build
-```
-
-## アクセス方法
-
-`.env.example` の値をそのまま使う場合、`id=3` のアクセス先は次の通りです。
-
-1. iPhoneまたはカメラ端末で `https://192.168.1.100:8080/?id=3` を開きます。
-2. 自己署名証明書の警告を許可します。
-3. カメラ使用を許可します。
-4. OBSまたは確認用ブラウザで `http://192.168.1.100:8081/stream?id=3` を開きます。
-
-実際には `.env` の `PUBLIC_HOST`、`APP_PORT`、`STREAM_PORT` に置き換えてアクセスしてください。
-
-`APP_PORT` と `STREAM_PORT` は通常は別ポートにしてください。同じポートにした場合、HTTPとHTTPSを同じポートで同時に待ち受けることはできないため、`/stream` もHTTPS側で配信されます。
-
-```text
-APP_PORT と STREAM_PORT が同じ場合:
-https://<PUBLIC_HOST>:<APP_PORT>/?id=3
-https://<PUBLIC_HOST>:<APP_PORT>/stream?id=3
-```
-
-この場合、`http://<PUBLIC_HOST>:<APP_PORT>/stream?id=3` は使えません。`APP_PORT` はHTTPS用ポートなので、HTTPでアクセスすると接続が成立せず、ブラウザ上では読み込み中のままに見えることがあります。
+* `Dockerfile` / `docker-compose.yml`: 本番用コンテナ設定ファイル。
