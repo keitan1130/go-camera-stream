@@ -45,7 +45,12 @@ function CameraMode() {
       pcRef.current = pc;
 
       // 映像を送るための枠(Transceiver)をあらかじめ用意しておく
-      pc.addTransceiver('video', { direction: 'sendonly' });
+      pc.addTransceiver('video', {
+        direction: 'sendonly',
+        sendEncodings: [
+          { maxBitrate: 5000000 }
+        ]
+      });
 
       pc.onicecandidate = (e) => {
         if (e.candidate) {

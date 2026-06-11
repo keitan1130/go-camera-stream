@@ -20,6 +20,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v3"
+	"github.com/pion/rtcp"
 )
 
 //go:embed frontend/dist/*
@@ -104,6 +105,18 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 				// カメラから送られてきた映像を受け取る処理
 				pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+					// 定期的にキーフレーム(PLI)を要求して、映像が崩壊したままになるのを防ぐ
+					go func() {
+						ticker := time.NewTicker(time.Second * 3) // 3秒ごとに要求（頻度は環境に合わせて調整）
+						defer ticker.Stop()
+						for range ticker.C {
+							if rtcpErr := pc.WriteRTCP([]rtcp.Packet{
+								&rtcp.PictureLossIndication{MediaSSRC: uint32(track.SSRC())},
+							}); rtcpErr != nil {
+								return // 接続が切れたら終了
+							}
+						}
+					}()
 					sfuMutex.Lock()
 					localTrack, _ := webrtc.NewTrackLocalStaticRTP(track.Codec().RTPCodecCapability, "video", "pion")
 					tracks[roomID] = localTrack
