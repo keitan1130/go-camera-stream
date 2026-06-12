@@ -65,9 +65,25 @@ export default function CameraMode() {
     };
 
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => {
-        pc.addTrack(track, streamRef.current!);
-      });
+      for (const track of streamRef.current.getTracks()) {
+        const sender = pc.addTrack(track, streamRef.current!);
+
+        if (track.kind === 'video') {
+          const parameters = sender.getParameters();
+          if (!parameters.encodings) {
+            parameters.encodings = [{}];
+          }
+          // 【1. 優先モードの設定 (Degradation Preference)】
+          // 'maintain-framerate' : 高速・滑らかさ重視（画質が荒くなってもFPSを維持）
+          // 'maintain-resolution': 高画質重視（カクカクになっても画質を維持）
+          // 'balanced'           : バランス型（デフォルト）
+          parameters.degradationPreference = 'maintain-resolution';
+          // 【2. 最大ビットレートの制限（オプション）】
+          // ネットワークを圧迫しすぎないように上限を決める場合（例: 5000kbps）
+          parameters.encodings[0].maxBitrate = 5000 * 1000;
+          await sender.setParameters(parameters);
+        }
+      }
     }
 
     pc.onicecandidate = (e) => {
@@ -158,26 +174,7 @@ export default function CameraMode() {
           if (sender) {
             await sender.replaceTrack(newVideoTrack);
           } else {
-            sender = pcRef.current.addTrack(newVideoTrack, stream);
-          }
-
-          if (sender) {
-            const parameters = sender.getParameters();
-            if (!parameters.encodings) {
-              parameters.encodings = [{}];
-            }
-
-            // 【1. 優先モードの設定 (Degradation Preference)】
-            // 'maintain-framerate' : 高速・滑らかさ重視（画質が荒くなってもFPSを維持）
-            // 'maintain-resolution': 高画質重視（カクカクになっても画質を維持）
-            // 'balanced'           : バランス型（デフォルト）
-            parameters.degradationPreference = 'maintain-resolution';
-
-            // 【2. 最大ビットレートの制限（オプション）】
-            // ネットワークを圧迫しすぎないように上限を決める場合（例: 5000kbps）
-            parameters.encodings[0].maxBitrate = 5000 * 1000;
-
-            await sender.setParameters(parameters);
+            pcRef.current.addTrack(newVideoTrack, stream);
           }
         }
         setCamStatus('動作中');
