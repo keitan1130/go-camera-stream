@@ -15,8 +15,8 @@ export default function CameraMode() {
   // カメラデバイスと設定の状態
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
-  const [selectedResolution, setSelectedResolution] = useState(RESOLUTIONS[2]);
-  const [selectedFps, setSelectedFps] = useState(FPS_OPTIONS[1]);
+  const [selectedResolution, setSelectedResolution] = useState(RESOLUTIONS[0]);
+  const [selectedFps, setSelectedFps] = useState(FPS_OPTIONS[0]);
   const streamRef = useRef<MediaStream | null>(null);
 
   // 初回のみ実行：カメラ一覧の取得
@@ -153,11 +153,31 @@ export default function CameraMode() {
 
         const newVideoTrack = stream.getVideoTracks()[0];
         if (pcRef.current && newVideoTrack) {
-          const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
+          let sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
+
           if (sender) {
             await sender.replaceTrack(newVideoTrack);
           } else {
-            pcRef.current.addTrack(newVideoTrack, stream);
+            sender = pcRef.current.addTrack(newVideoTrack, stream);
+          }
+
+          if (sender) {
+            const parameters = sender.getParameters();
+            if (!parameters.encodings) {
+              parameters.encodings = [{}];
+            }
+
+            // 【1. 優先モードの設定 (Degradation Preference)】
+            // 'maintain-framerate' : 高速・滑らかさ重視（画質が荒くなってもFPSを維持）
+            // 'maintain-resolution': 高画質重視（カクカクになっても画質を維持）
+            // 'balanced'           : バランス型（デフォルト）
+            parameters.degradationPreference = 'maintain-resolution';
+
+            // 【2. 最大ビットレートの制限（オプション）】
+            // ネットワークを圧迫しすぎないように上限を決める場合（例: 5000kbps）
+            parameters.encodings[0].maxBitrate = 5000 * 1000;
+
+            await sender.setParameters(parameters);
           }
         }
         setCamStatus('動作中');
