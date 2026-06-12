@@ -68,6 +68,10 @@
   cursor: pointer;
 }
 
+.device-select {
+  max-width: 150px;
+}
+
 .controls select:hover,
 .controls select:focus {
   background-color: var(--background-third-color);

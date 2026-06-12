@@ -18,7 +18,6 @@ export default function ViewerMode() {
       pc.addTransceiver('video', { direction: 'recvonly' });
 
       pc.ontrack = (e) => {
-        console.log("映像データを受信しました！");
         if (videoRef.current) {
           videoRef.current.srcObject = e.streams[0] || new MediaStream([e.track]);
         }

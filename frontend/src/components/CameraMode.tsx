@@ -6,18 +6,63 @@ export default function CameraMode() {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  const [wsStatus, setWsStatus] = useState('通信: 初期化中');
+  const streamId = new URLSearchParams(window.location.search).get('id') || 'default';
+
+  // 統合された分かりやすいステータス管理
+  const [connectionPhase, setConnectionPhase] = useState(`オフライン`);
   const [camStatus, setCamStatus] = useState('待機中');
 
+  // カメラデバイスと設定の状態
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [selectedResolution, setSelectedResolution] = useState(RESOLUTIONS[2]);
   const [selectedFps, setSelectedFps] = useState(FPS_OPTIONS[1]);
   const streamRef = useRef<MediaStream | null>(null);
 
+  // 初回のみ実行：カメラ一覧の取得
+  useEffect(() => {
+    const getDevices = async () => {
+      try {
+        // iOS対策: 一度カメラのアクセス許可を得ないとラベル名が空になるため
+        await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = devices.filter(device => device.kind === 'videoinput');
+
+        setVideoDevices(videoInputs);
+        // 最初から選択状態を作っておく
+        if (videoInputs.length > 0 && !selectedDeviceId) {
+          setSelectedDeviceId(videoInputs[0].deviceId);
+        }
+      } catch (err) {
+        console.error("デバイス一覧の取得に失敗しました:", err);
+      }
+    };
+    getDevices();
+  }, []);
+
+  // WebRTCの接続構築とオファー送信
   const createPeerConnectionAndSendOffer = async () => {
     if (pcRef.current) pcRef.current.close();
 
     const pc = new RTCPeerConnection(rtcConfig);
     pcRef.current = pc;
+
+    // P2Pの実際の接続状態を監視してUIに反映
+    pc.onconnectionstatechange = () => {
+      switch (pc.connectionState) {
+        case 'connecting':
+          setConnectionPhase('接続試行中');
+          break;
+        case 'connected':
+          setConnectionPhase(`配信中 [ID: ${streamId}]`);
+          break;
+        case 'disconnected':
+        case 'failed':
+        case 'closed':
+          setConnectionPhase(`スタンバイ [ID: ${streamId}]`);
+          break;
+      }
+    };
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => {
@@ -38,14 +83,14 @@ export default function CameraMode() {
     }
   };
 
+  // WebSocketシグナリング接続
   useEffect(() => {
-    const streamId = new URLSearchParams(window.location.search).get('id') || 'default';
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws?id=${encodeURIComponent(streamId)}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      setWsStatus(`通信: 接続完了 [ID: ${streamId}]`);
+      setConnectionPhase(`スタンバイ [ID: ${streamId}]`);
       ws.send(JSON.stringify({ role: 'camera', type: 'join' }));
       createPeerConnectionAndSendOffer();
     };
@@ -55,7 +100,7 @@ export default function CameraMode() {
       if (msg.role === 'camera') return;
 
       if (msg.type === 'join' && msg.role === 'viewer') {
-        console.log("視聴者の参加を検知しました。接続を再構築します。");
+        setConnectionPhase('接続試行中');
         createPeerConnectionAndSendOffer();
       } else if (msg.type === 'answer' && pcRef.current) {
         await pcRef.current.setRemoteDescription(msg.sdp);
@@ -64,27 +109,36 @@ export default function CameraMode() {
       }
     };
 
-    ws.onerror = () => setWsStatus('通信: エラー');
-    ws.onclose = () => setWsStatus('通信: 切断されました');
+    ws.onerror = () => setConnectionPhase('ネットワークエラー');
+    ws.onclose = () => setConnectionPhase('ネットワーク切断');
 
     return () => {
       ws.close();
       pcRef.current?.close();
     };
-  }, []);
+  }, [streamId]);
 
+  // カメラの起動と設定変更の反映
   useEffect(() => {
     async function updateCamera() {
       setCamStatus('適用中');
       try {
+        const videoConstraints: any = {
+          width: { ideal: selectedResolution.width },
+          height: { ideal: selectedResolution.height },
+          frameRate: { ideal: selectedFps }
+        };
+
+        // デバイスIDが選択されていれば特定レンズを指定、なければ環境カメラにフォールバック
+        if (selectedDeviceId) {
+          videoConstraints.deviceId = { exact: selectedDeviceId };
+        } else {
+          videoConstraints.facingMode = { ideal: 'environment' };
+        }
+
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: selectedResolution.width },
-            height: { ideal: selectedResolution.height },
-            frameRate: { ideal: selectedFps }
-          }
+          video: videoConstraints
         });
 
         if (streamRef.current) {
@@ -119,16 +173,35 @@ export default function CameraMode() {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
     };
-  }, [selectedResolution, selectedFps]);
+  }, [selectedResolution, selectedFps, selectedDeviceId]);
 
   return (
     <div className="app-container">
       <div className="header-controls">
-        <div className="status-badge"><div>{wsStatus}</div></div>
+        <div className="status-badge">
+          <div>{connectionPhase}</div>
+        </div>
+
         <div className="controls">
           <div className={`camera-status ${camStatus === '起動失敗' ? 'error' : ''}`}>
             {camStatus}
           </div>
+
+          <label>
+            <select
+              className="device-select"
+              value={selectedDeviceId}
+              onChange={(e) => setSelectedDeviceId(e.target.value)}
+            >
+              {videoDevices.length === 0 && <option value="">読込中</option>}
+              {videoDevices.map(device => (
+                <option key={device.deviceId} value={device.deviceId}>
+                  {device.label || `カメラ (${device.deviceId.substring(0, 4)})`}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <label>
             <select
               value={selectedResolution.label}
@@ -140,6 +213,7 @@ export default function CameraMode() {
               {RESOLUTIONS.map(res => <option key={res.label} value={res.label}>{res.label}</option>)}
             </select>
           </label>
+
           <label>
             <select
               value={selectedFps}
