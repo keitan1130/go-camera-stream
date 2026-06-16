@@ -231,7 +231,7 @@ export default function CameraMode() {
           <div>streamId: {streamId}</div>
           <div>connectionState: {connectionState}</div>
           <div>iceConnectionState: {iceState}</div>
-          <div>currentRoundTripTime: {viewerStats?.currentRoundTripTime !== undefined ? `${(viewerStats.currentRoundTripTime * 1000).toFixed(1)}ms` : '---'}</div>
+          <div>ping: {viewerStats?.currentRoundTripTime !== undefined ? `${(viewerStats.currentRoundTripTime * 1000).toFixed(1)}ms` : '---'}</div>
 
           <div>bitrate: {formatBitrate(viewerStats?.bitrate)}</div>
 
@@ -239,11 +239,11 @@ export default function CameraMode() {
           <div>jitter: {viewerStats?.jitter !== undefined ? `${viewerStats.jitter.toFixed(4)}s` : '---'}</div>
 
           <div>
-            frameWidth / frameHeight: {currentWidth}x{selectedResolution.height} / {viewerStats?.frameWidth && viewerStats?.frameHeight ? `${viewerStats.frameWidth}x${viewerStats.frameHeight}` : '---'}
+            {currentWidth}x{selectedResolution.height} / {viewerStats?.frameWidth && viewerStats?.frameHeight ? `${viewerStats.frameWidth}x${viewerStats.frameHeight}` : '---'}
           </div>
 
           <div>
-            framesPerSecond: {selectedFps} / {viewerStats?.framesPerSecond ? `${Math.round(viewerStats.framesPerSecond)}` : '---'} fps
+            {selectedFps} / {viewerStats?.framesPerSecond ? `${Math.round(viewerStats.framesPerSecond)}` : '---'} fps
           </div>
 
           <div>framesDropped: {viewerStats?.framesDropped || '0'}</div>
