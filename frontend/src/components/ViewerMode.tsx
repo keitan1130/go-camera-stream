@@ -119,7 +119,7 @@ export default function ViewerMode() {
     <div className="app-container" style={{ backgroundColor: 'transparent' }}>
       {connectionState !== 'connected' && (
         <div className="green-minimal-ui" style={{ pointerEvents: 'none' }}>
-          <div>Stream: {streamId}</div>
+          <div>StreamId: {streamId}</div>
           <div>disconnect</div>
         </div>
       )}
