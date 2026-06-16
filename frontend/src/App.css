@@ -1,8 +1,8 @@
 .app-container {
   width: 100vw;
   height: 100dvh;
-  background-color: #000;
-  color: #fff;
+  background-color: var(--background-color);
+  color: var(--text-color);
   margin: 0;
   overflow: hidden;
   position: relative;
@@ -20,8 +20,7 @@
   top: 10px;
   left: 10px;
   z-index: 20;
-  color: #00ff00;
-  font-family: 'Courier New', Courier, monospace;
+  color: var(--text-color);
   font-size: 11px;
   line-height: 1.4;
   background: transparent;
@@ -37,10 +36,9 @@
 
 .green-minimal-ui select {
   background: transparent;
-  color: #00ff00;
+  color: var(--text-color);
   border: none;
   outline: none;
-  font-family: 'Courier New', Courier, monospace;
   font-size: 11px;
   cursor: pointer;
   -webkit-appearance: none;
@@ -52,8 +50,8 @@
 
 /* セレクトボックスの選択肢表示時の背景 */
 .green-minimal-ui select option {
-  background-color: #111;
-  color: #00ff00;
+  background: var(--background-color);
+  color: var(--text-color);
 }
 
 /* 右上の操作ボタンパネル */
@@ -68,16 +66,15 @@
 }
 
 .right-control-panel button {
-  background: rgba(0, 0, 0, 0.6);
-  color: #00ff00;
-  border: 1px solid #00ff00;
+  background: var(--popup-background);
+  color: var(--text-color);
+  border: 1px solid var(--text-color);
   padding: 4px 8px;
-  font-family: 'Courier New', Courier, monospace;
   font-size: 11px;
   border-radius: 3px;
   cursor: pointer;
 }
 
 .right-control-panel button:hover {
-  background: rgba(0, 255, 0, 0.2);
+  background: var(--background-secondary-color);
 }

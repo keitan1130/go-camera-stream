@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { RESOLUTIONS, FPS_OPTIONS, ASPECT_RATIOS, rtcConfig } from '../constants';
+import { RESOLUTIONS, FPS_OPTIONS, ASPECT_RATIOS, rtcConfig, type WebRTCStats } from '../constants';
 
 export default function CameraMode() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -8,27 +8,47 @@ export default function CameraMode() {
 
   const streamId = new URLSearchParams(window.location.search).get('id') || 'default';
 
-  // UI表示とステータス用の状態
-  const [showLeftUI, setShowLeftUI] = useState(true);
-  const [showPreview, setShowPreview] = useState(true);
+  const getSavedState = <T,>(key: string, defaultValue: T): T => {
+    const saved = localStorage.getItem(key);
+    if (saved !== null) {
+      try { return JSON.parse(saved); } catch { return defaultValue; }
+    }
+    return defaultValue;
+  };
+
+  const [showLeftUI, setShowLeftUI] = useState(() => getSavedState('camera_showLeftUI', true));
+  const [showPreview, setShowPreview] = useState(() => getSavedState('camera_showPreview', true));
   const [connectionState, setConnectionState] = useState('new');
   const [iceState, setIceState] = useState('new');
-  const [viewerStats, setViewerStats] = useState<any>(null);
-  const [localCodec, setLocalCodec] = useState('---'); // 送信側コーデックの動的化
+  const [viewerStats, setViewerStats] = useState<WebRTCStats | null>(null);
+  const [localCodec, setLocalCodec] = useState('---');
 
-  // カメラデバイスと設定の状態
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
-  const [selectedResolution, setSelectedResolution] = useState(RESOLUTIONS[0]);
-  const [selectedRatio, setSelectedRatio] = useState(ASPECT_RATIOS[0]);
-  const [selectedFps, setSelectedFps] = useState(FPS_OPTIONS[0]);
+
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(() => getSavedState('camera_deviceId', ''));
+  const [selectedResolution, setSelectedResolution] = useState(() => {
+    const savedLabel = getSavedState('camera_resolution', RESOLUTIONS[0].label);
+    return RESOLUTIONS.find(r => r.label === savedLabel) || RESOLUTIONS[0];
+  });
+  const [selectedRatio, setSelectedRatio] = useState(() => {
+    const savedLabel = getSavedState('camera_ratio', ASPECT_RATIOS[0].label);
+    return ASPECT_RATIOS.find(r => r.label === savedLabel) || ASPECT_RATIOS[0];
+  });
+  const [selectedFps, setSelectedFps] = useState(() => getSavedState('camera_fps', FPS_OPTIONS[0]));
 
   const streamRef = useRef<MediaStream | null>(null);
 
-  // 計算された送信側の現在の理想的な横幅
   const currentWidth = Math.round((selectedResolution.height * selectedRatio.widthRatio) / selectedRatio.heightRatio);
 
-  // 初回のみ実行：カメラ一覧の取得
+  useEffect(() => {
+    localStorage.setItem('camera_showLeftUI', JSON.stringify(showLeftUI));
+    localStorage.setItem('camera_showPreview', JSON.stringify(showPreview));
+    localStorage.setItem('camera_deviceId', JSON.stringify(selectedDeviceId));
+    localStorage.setItem('camera_resolution', JSON.stringify(selectedResolution.label));
+    localStorage.setItem('camera_ratio', JSON.stringify(selectedRatio.label));
+    localStorage.setItem('camera_fps', JSON.stringify(selectedFps));
+  }, [showLeftUI, showPreview, selectedDeviceId, selectedResolution, selectedRatio, selectedFps]);
+
   useEffect(() => {
     const getDevices = async () => {
       try {
@@ -37,9 +57,7 @@ export default function CameraMode() {
         const videoInputs = devices.filter(device => device.kind === 'videoinput');
 
         setVideoDevices(videoInputs);
-        if (videoInputs.length > 0 && !selectedDeviceId) {
-          setSelectedDeviceId(videoInputs[0].deviceId);
-        }
+        setSelectedDeviceId(prev => prev ? prev : (videoInputs.length > 0 ? videoInputs[0].deviceId : ''));
       } catch (err) {
         console.error("デバイス一覧の取得に失敗しました:", err);
       }
@@ -47,7 +65,6 @@ export default function CameraMode() {
     getDevices();
   }, []);
 
-  // 送信側（Camera）自身のStatsを定期取得し、エンコード中のコーデックを動的に特定
   useEffect(() => {
     const localStatsInterval = setInterval(async () => {
       if (pcRef.current && pcRef.current.connectionState === 'connected') {
@@ -68,7 +85,6 @@ export default function CameraMode() {
     return () => clearInterval(localStatsInterval);
   }, []);
 
-  // WebRTCの接続構築とオファー送信
   const createPeerConnectionAndSendOffer = async () => {
     if (pcRef.current) pcRef.current.close();
 
@@ -77,8 +93,6 @@ export default function CameraMode() {
 
     pc.onconnectionstatechange = () => {
       setConnectionState(pc.connectionState);
-
-      // ★接続中（connected）以外のときは、受信側の数値をすべて「---」にするためStatsをクリア
       if (pc.connectionState !== 'connected') {
         setViewerStats(null);
       }
@@ -90,7 +104,7 @@ export default function CameraMode() {
 
     if (streamRef.current) {
       for (const track of streamRef.current.getTracks()) {
-        const sender = pc.addTrack(track, streamRef.current!);
+        const sender = pc.addTrack(track, streamRef.current);
 
         if (track.kind === 'video') {
           const parameters = sender.getParameters();
@@ -117,7 +131,6 @@ export default function CameraMode() {
     }
   };
 
-  // WebSocketシグナリング接続
   useEffect(() => {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws?id=${encodeURIComponent(streamId)}`);
@@ -139,7 +152,6 @@ export default function CameraMode() {
       } else if (msg.type === 'candidate' && pcRef.current) {
         await pcRef.current.addIceCandidate(msg.candidate);
       } else if (msg.type === 'stats') {
-        // ★ピア接続が正常に確立しているときのみ受信データを受け入れる
         if (pcRef.current && pcRef.current.connectionState === 'connected') {
           setViewerStats(msg.stats);
         }
@@ -152,14 +164,13 @@ export default function CameraMode() {
     };
   }, [streamId]);
 
-  // カメラの起動と設定変更の反映
   useEffect(() => {
     async function updateCamera() {
       try {
-        const videoConstraints: any = {
-          width: { ideal: currentWidth },
-          height: { ideal: selectedResolution.height },
-          frameRate: { ideal: selectedFps }
+        const videoConstraints: MediaTrackConstraints = {
+          width: { ideal: currentWidth, max: currentWidth },
+          height: { ideal: selectedResolution.height, max: selectedResolution.height },
+          frameRate: { ideal: selectedFps, max: selectedFps }
         };
 
         if (selectedDeviceId) {
@@ -185,7 +196,7 @@ export default function CameraMode() {
 
         const newVideoTrack = stream.getVideoTracks()[0];
         if (pcRef.current && newVideoTrack) {
-          let sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
+          const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
 
           if (sender) {
             await sender.replaceTrack(newVideoTrack);
@@ -204,22 +215,29 @@ export default function CameraMode() {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
     };
-  }, [selectedResolution, selectedFps, selectedDeviceId, selectedRatio]);
+  }, [selectedResolution, selectedFps, selectedDeviceId, selectedRatio, currentWidth]);
+
+  const formatBitrate = (bps?: number) => {
+    if (bps === undefined || isNaN(bps)) return '---';
+    if (bps >= 1000000) return `${(bps / 1000000).toFixed(2)} Mbps`;
+    if (bps >= 1000) return `${(bps / 1000).toFixed(0)} Kbps`;
+    return `${Math.round(bps)} bps`;
+  };
 
   return (
     <div className="app-container">
       {showLeftUI && (
         <div className="green-minimal-ui">
-          {/* ★追加: streamIdの表記 */}
           <div>streamId: {streamId}</div>
           <div>connectionState: {connectionState}</div>
           <div>iceConnectionState: {iceState}</div>
           <div>currentRoundTripTime: {viewerStats?.currentRoundTripTime !== undefined ? `${(viewerStats.currentRoundTripTime * 1000).toFixed(1)}ms` : '---'}</div>
-          <div>bytesReceived: {viewerStats?.bytesReceived || '---'}</div>
+
+          <div>bitrate: {formatBitrate(viewerStats?.bitrate)}</div>
+
           <div>packetsLost: {viewerStats?.packetsLost || '0'}</div>
           <div>jitter: {viewerStats?.jitter !== undefined ? `${viewerStats.jitter.toFixed(4)}s` : '---'}</div>
 
-          {/* ★表示の最適化: 送信縦横ピクセル / 受信縦横ピクセル */}
           <div>
             frameWidth / frameHeight: {currentWidth}x{selectedResolution.height} / {viewerStats?.frameWidth && viewerStats?.frameHeight ? `${viewerStats.frameWidth}x${viewerStats.frameHeight}` : '---'}
           </div>
@@ -230,7 +248,6 @@ export default function CameraMode() {
 
           <div>framesDropped: {viewerStats?.framesDropped || '0'}</div>
 
-          {/* ★動的化: 送信側実測 / 受信側実測 */}
           <div>
             mimeType: {localCodec} / {viewerStats?.mimeType || '---'}
           </div>

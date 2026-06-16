@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { rtcConfig } from '../constants';
+import { rtcConfig, type WebRTCStats } from '../constants';
 
 export default function ViewerMode() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -10,6 +10,10 @@ export default function ViewerMode() {
   const streamId = new URLSearchParams(window.location.search).get('id') || 'default';
 
   useEffect(() => {
+    let statsInterval: ReturnType<typeof setInterval> | undefined;
+    let lastBytesReceived = 0;
+    let lastTimestamp = 0;
+
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws?id=${encodeURIComponent(streamId)}`);
 
@@ -41,11 +45,10 @@ export default function ViewerMode() {
     ws.onopen = () => {
       ws.send(JSON.stringify({ role: 'viewer', type: 'join' }));
 
-      // Stats（統計情報）を定期取得して送信
-      const statsInterval = setInterval(async () => {
+      statsInterval = setInterval(async () => {
         if (pcRef.current && pcRef.current.connectionState === 'connected') {
           const stats = await pcRef.current.getStats();
-          const statsData: any = {};
+          const statsData: WebRTCStats = {};
 
           stats.forEach(report => {
             if (report.type === 'candidate-pair' && report.state === 'succeeded') {
@@ -53,6 +56,18 @@ export default function ViewerMode() {
             }
             if (report.type === 'inbound-rtp' && report.kind === 'video') {
               statsData.bytesReceived = report.bytesReceived;
+
+              const now = report.timestamp;
+              if (lastBytesReceived > 0 && lastTimestamp > 0) {
+                const deltaBytes = report.bytesReceived - lastBytesReceived;
+                const deltaTime = (now - lastTimestamp) / 1000;
+                if (deltaTime > 0) {
+                  statsData.bitrate = (deltaBytes * 8) / deltaTime;
+                }
+              }
+              lastBytesReceived = report.bytesReceived;
+              lastTimestamp = now;
+
               statsData.packetsLost = report.packetsLost;
               statsData.jitter = report.jitter;
               statsData.frameWidth = report.frameWidth;
@@ -76,8 +91,6 @@ export default function ViewerMode() {
           }));
         }
       }, 2000);
-
-      (ws as any)._statsInterval = statsInterval;
     };
 
     ws.onmessage = async (event) => {
@@ -96,7 +109,7 @@ export default function ViewerMode() {
     };
 
     return () => {
-      if ((ws as any)._statsInterval) clearInterval((ws as any)._statsInterval);
+      if (statsInterval) clearInterval(statsInterval);
       ws.close();
       pcRef.current?.close();
     };
