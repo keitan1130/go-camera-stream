@@ -1,12 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { rtcConfig } from '../constants';
 
 export default function ViewerMode() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
 
+  const [connectionState, setConnectionState] = useState('new');
+
+  const streamId = new URLSearchParams(window.location.search).get('id') || 'default';
+
   useEffect(() => {
-    const streamId = new URLSearchParams(window.location.search).get('id') || 'default';
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws?id=${encodeURIComponent(streamId)}`);
 
@@ -14,6 +17,10 @@ export default function ViewerMode() {
       if (pcRef.current) pcRef.current.close();
       const pc = new RTCPeerConnection(rtcConfig);
       pcRef.current = pc;
+
+      pc.onconnectionstatechange = () => {
+        setConnectionState(pc.connectionState);
+      };
 
       pc.addTransceiver('video', { direction: 'recvonly' });
 
@@ -33,6 +40,44 @@ export default function ViewerMode() {
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ role: 'viewer', type: 'join' }));
+
+      // Stats（統計情報）を定期取得して送信
+      const statsInterval = setInterval(async () => {
+        if (pcRef.current && pcRef.current.connectionState === 'connected') {
+          const stats = await pcRef.current.getStats();
+          const statsData: any = {};
+
+          stats.forEach(report => {
+            if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+              statsData.currentRoundTripTime = report.currentRoundTripTime;
+            }
+            if (report.type === 'inbound-rtp' && report.kind === 'video') {
+              statsData.bytesReceived = report.bytesReceived;
+              statsData.packetsLost = report.packetsLost;
+              statsData.jitter = report.jitter;
+              statsData.frameWidth = report.frameWidth;
+              statsData.frameHeight = report.frameHeight;
+              statsData.framesPerSecond = report.framesPerSecond;
+              statsData.framesDropped = report.framesDropped;
+
+              if (report.codecId) {
+                const codec = stats.get(report.codecId);
+                if (codec) {
+                  statsData.mimeType = codec.mimeType.replace('video/', '');
+                }
+              }
+            }
+          });
+
+          ws.send(JSON.stringify({
+            role: 'viewer',
+            type: 'stats',
+            stats: statsData
+          }));
+        }
+      }, 2000);
+
+      (ws as any)._statsInterval = statsInterval;
     };
 
     ws.onmessage = async (event) => {
@@ -51,13 +96,21 @@ export default function ViewerMode() {
     };
 
     return () => {
+      if ((ws as any)._statsInterval) clearInterval((ws as any)._statsInterval);
       ws.close();
       pcRef.current?.close();
     };
-  }, []);
+  }, [streamId]);
 
   return (
     <div className="app-container" style={{ backgroundColor: 'transparent' }}>
+      {connectionState !== 'connected' && (
+        <div className="green-minimal-ui" style={{ pointerEvents: 'none' }}>
+          <div>id: {streamId}</div>
+          <div>disconnect</div>
+        </div>
+      )}
+
       <video ref={videoRef} autoPlay muted playsInline className="video-stream" />
     </div>
   );

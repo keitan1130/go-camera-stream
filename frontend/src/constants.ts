@@ -1,8 +1,16 @@
 export const RESOLUTIONS = [
-  { label: 'FHD (1920x1080)', width: 1920, height: 1080 },
-  { label: 'HD (1280x720)', width: 1280, height: 720 },
-  { label: 'VGA (640x480)', width: 640, height: 480 },
-  { label: 'QVGA (320x240)', width: 320, height: 240 },
+  { label: '1080p', height: 1080 },
+  { label: '720p', height: 720 },
+  { label: '480p', height: 480 },
+  { label: '360p', height: 360 },
+  { label: '240p', height: 240 },
+  { label: '144p', height: 144 },
+];
+
+export const ASPECT_RATIOS = [
+  { label: '16:9', widthRatio: 16, heightRatio: 9 },
+  { label: '4:3', widthRatio: 4, heightRatio: 3 },
+  { label: '1:1', widthRatio: 1, heightRatio: 1 },
 ];
 
 export const FPS_OPTIONS = [30, 24, 15, 10, 5];
