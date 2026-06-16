@@ -112,7 +112,7 @@ export default function CameraMode() {
             parameters.encodings = [{}];
           }
           parameters.degradationPreference = 'maintain-resolution';
-          parameters.encodings[0].maxBitrate = 5000 * 1000;
+          parameters.encodings[0].maxBitrate = 100 * 1000 * 1000;
           await sender.setParameters(parameters);
         }
       }
