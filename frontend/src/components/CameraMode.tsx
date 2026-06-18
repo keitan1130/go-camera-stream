@@ -18,6 +18,8 @@ export default function CameraMode() {
 
   const [showLeftUI, setShowLeftUI] = useState(() => getSavedState('camera_showLeftUI', true));
   const [showPreview, setShowPreview] = useState(() => getSavedState('camera_showPreview', true));
+  const [isVideoMuted, setIsVideoMuted] = useState(() => getSavedState('camera_isVideoMuted', false));
+
   const [connectionState, setConnectionState] = useState('new');
   const [iceState, setIceState] = useState('new');
   const [viewerStats, setViewerStats] = useState<WebRTCStats | null>(null);
@@ -39,19 +41,26 @@ export default function CameraMode() {
   const [selectedDegradation, setSelectedDegradation] = useState<string>(() => getSavedState('camera_degradation', 'maintain-resolution'));
   const degradationRef = useRef(selectedDegradation);
 
+  const isVideoMutedRef = useRef(isVideoMuted);
+  useEffect(() => {
+    isVideoMutedRef.current = isVideoMuted;
+  }, [isVideoMuted]);
+
   const streamRef = useRef<MediaStream | null>(null);
+  const rtcTrackRef = useRef<MediaStreamTrack | null>(null);
 
   const currentWidth = Math.round((selectedResolution.height * selectedRatio.widthRatio) / selectedRatio.heightRatio);
 
   useEffect(() => {
     localStorage.setItem('camera_showLeftUI', JSON.stringify(showLeftUI));
     localStorage.setItem('camera_showPreview', JSON.stringify(showPreview));
+    localStorage.setItem('camera_isVideoMuted', JSON.stringify(isVideoMuted));
     localStorage.setItem('camera_deviceId', JSON.stringify(selectedDeviceId));
     localStorage.setItem('camera_resolution', JSON.stringify(selectedResolution.label));
     localStorage.setItem('camera_ratio', JSON.stringify(selectedRatio.label));
     localStorage.setItem('camera_fps', JSON.stringify(selectedFps));
     localStorage.setItem('camera_degradation', JSON.stringify(selectedDegradation));
-  }, [showLeftUI, showPreview, selectedDeviceId, selectedResolution, selectedRatio, selectedFps, selectedDegradation]);
+  }, [showLeftUI, showPreview, isVideoMuted, selectedDeviceId, selectedResolution, selectedRatio, selectedFps, selectedDegradation]);
 
   useEffect(() => {
     degradationRef.current = selectedDegradation;
@@ -118,20 +127,15 @@ export default function CameraMode() {
       setIceState(pc.iceConnectionState);
     };
 
-    if (streamRef.current) {
-      for (const track of streamRef.current.getTracks()) {
-        const sender = pc.addTrack(track, streamRef.current);
-
-        if (track.kind === 'video') {
-          const parameters = sender.getParameters();
-          if (!parameters.encodings) {
-            parameters.encodings = [{}];
-          }
-          parameters.degradationPreference = degradationRef.current as RTCDegradationPreference;
-          parameters.encodings[0].maxBitrate = 300 * 1000 * 1000;
-          await sender.setParameters(parameters);
-        }
+    if (rtcTrackRef.current && streamRef.current) {
+      const sender = pc.addTrack(rtcTrackRef.current, streamRef.current);
+      const parameters = sender.getParameters();
+      if (!parameters.encodings) {
+        parameters.encodings = [{}];
       }
+      parameters.degradationPreference = degradationRef.current as RTCDegradationPreference;
+      parameters.encodings[0].maxBitrate = 300 * 1000 * 1000;
+      await sender.setParameters(parameters);
     }
 
     pc.onicecandidate = (e) => {
@@ -201,6 +205,10 @@ export default function CameraMode() {
         if (streamRef.current) {
           streamRef.current.getTracks().forEach(track => track.stop());
         }
+        if (rtcTrackRef.current) {
+          rtcTrackRef.current.stop();
+        }
+
         streamRef.current = stream;
 
         if (videoRef.current) {
@@ -209,13 +217,24 @@ export default function CameraMode() {
         }
 
         const newVideoTrack = stream.getVideoTracks()[0];
-        if (pcRef.current && newVideoTrack) {
-          const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
+        if (newVideoTrack) {
+          const clonedTrack = newVideoTrack.clone();
+          clonedTrack.enabled = !isVideoMutedRef.current;
+          rtcTrackRef.current = clonedTrack;
 
-          if (sender) {
-            await sender.replaceTrack(newVideoTrack);
-          } else {
-            pcRef.current.addTrack(newVideoTrack, stream);
+          if (pcRef.current) {
+            const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video' || s.track === null);
+
+            if (sender) {
+              await sender.replaceTrack(clonedTrack);
+            } else {
+              const newSender = pcRef.current.addTrack(clonedTrack, stream);
+              const parameters = newSender.getParameters();
+              if (!parameters.encodings) parameters.encodings = [{}];
+              parameters.degradationPreference = degradationRef.current as RTCDegradationPreference;
+              parameters.encodings[0].maxBitrate = 300 * 1000 * 1000;
+              newSender.setParameters(parameters).catch(e => console.error(e));
+            }
           }
         }
       } catch (err) {
@@ -228,8 +247,19 @@ export default function CameraMode() {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
+      if (rtcTrackRef.current) {
+        rtcTrackRef.current.stop();
+      }
     };
   }, [selectedResolution, selectedFps, selectedDeviceId, selectedRatio, currentWidth]);
+
+  const toggleVideoMute = () => {
+    const nextMutedState = !isVideoMuted;
+    setIsVideoMuted(nextMutedState);
+    if (rtcTrackRef.current) {
+      rtcTrackRef.current.enabled = !nextMutedState;
+    }
+  };
 
   const formatBitrate = (bps?: number) => {
     if (bps === undefined || isNaN(bps) || bps < 0) return '---';
@@ -328,6 +358,9 @@ export default function CameraMode() {
         </button>
         <button onClick={() => setShowPreview(!showPreview)}>
           {showPreview ? 'Hide Preview' : 'Show Preview'}
+        </button>
+        <button onClick={toggleVideoMute} style={{ color: isVideoMuted ? '#ff4444' : '#00ff00', borderColor: isVideoMuted ? '#ff4444' : '#00ff00' }}>
+          {isVideoMuted ? 'Unmute Video' : 'Mute Video'}
         </button>
       </div>
 
