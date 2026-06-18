@@ -359,7 +359,7 @@ export default function CameraMode() {
         <button onClick={() => setShowPreview(!showPreview)}>
           {showPreview ? 'Hide Preview' : 'Show Preview'}
         </button>
-        <button onClick={toggleVideoMute} style={{ color: isVideoMuted ? '#ff4444' : '#00ff00', borderColor: isVideoMuted ? '#ff4444' : '#00ff00' }}>
+        <button onClick={toggleVideoMute} className={isVideoMuted ? 'is-muted' : 'is-active'}>
           {isVideoMuted ? 'Unmute Video' : 'Mute Video'}
         </button>
       </div>

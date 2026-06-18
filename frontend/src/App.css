@@ -79,3 +79,8 @@
 .right-control-panel button:hover {
   background: var(--background-secondary-color);
 }
+
+.right-control-panel button.is-muted {
+  color: var(--text-red-color);
+  border-color: var(--text-red-color);
+}
