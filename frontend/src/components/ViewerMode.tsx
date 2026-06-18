@@ -6,7 +6,6 @@ export default function ViewerMode() {
   const pcRef = useRef<RTCPeerConnection | null>(null);
 
   const [connectionState, setConnectionState] = useState('new');
-
   const streamId = new URLSearchParams(window.location.search).get('id') || 'default';
 
   useEffect(() => {
@@ -24,6 +23,9 @@ export default function ViewerMode() {
 
       pc.onconnectionstatechange = () => {
         setConnectionState(pc.connectionState);
+        if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
+          if (videoRef.current) videoRef.current.srcObject = null;
+        }
       };
 
       pc.addTransceiver('video', { direction: 'recvonly' });
@@ -96,6 +98,10 @@ export default function ViewerMode() {
     ws.onmessage = async (event) => {
       const msg = JSON.parse(event.data);
       if (msg.role === 'viewer') return;
+
+      if (msg.type === 'join' && msg.role === 'camera') {
+        ws.send(JSON.stringify({ role: 'viewer', type: 'join' }));
+      }
 
       if (msg.type === 'offer') {
         const pc = createPeerConnection();
