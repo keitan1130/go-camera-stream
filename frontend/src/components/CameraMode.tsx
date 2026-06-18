@@ -228,12 +228,7 @@ export default function CameraMode() {
             if (sender) {
               await sender.replaceTrack(clonedTrack);
             } else {
-              const newSender = pcRef.current.addTrack(clonedTrack, stream);
-              const parameters = newSender.getParameters();
-              if (!parameters.encodings) parameters.encodings = [{}];
-              parameters.degradationPreference = degradationRef.current as RTCDegradationPreference;
-              parameters.encodings[0].maxBitrate = 300 * 1000 * 1000;
-              newSender.setParameters(parameters).catch(e => console.error(e));
+              createPeerConnectionAndSendOffer();
             }
           }
         }
