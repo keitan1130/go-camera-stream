@@ -36,6 +36,9 @@ export default function CameraMode() {
   });
   const [selectedFps, setSelectedFps] = useState(() => getSavedState('camera_fps', FPS_OPTIONS[0]));
 
+  const [selectedDegradation, setSelectedDegradation] = useState<string>(() => getSavedState('camera_degradation', 'maintain-resolution'));
+  const degradationRef = useRef(selectedDegradation);
+
   const streamRef = useRef<MediaStream | null>(null);
 
   const currentWidth = Math.round((selectedResolution.height * selectedRatio.widthRatio) / selectedRatio.heightRatio);
@@ -47,7 +50,20 @@ export default function CameraMode() {
     localStorage.setItem('camera_resolution', JSON.stringify(selectedResolution.label));
     localStorage.setItem('camera_ratio', JSON.stringify(selectedRatio.label));
     localStorage.setItem('camera_fps', JSON.stringify(selectedFps));
-  }, [showLeftUI, showPreview, selectedDeviceId, selectedResolution, selectedRatio, selectedFps]);
+    localStorage.setItem('camera_degradation', JSON.stringify(selectedDegradation));
+  }, [showLeftUI, showPreview, selectedDeviceId, selectedResolution, selectedRatio, selectedFps, selectedDegradation]);
+
+  useEffect(() => {
+    degradationRef.current = selectedDegradation;
+    if (pcRef.current) {
+      const sender = pcRef.current.getSenders().find(s => s.track?.kind === 'video');
+      if (sender) {
+        const params = sender.getParameters();
+        params.degradationPreference = selectedDegradation as RTCDegradationPreference;
+        sender.setParameters(params).catch(e => console.error("Degradation update failed:", e));
+      }
+    }
+  }, [selectedDegradation]);
 
   useEffect(() => {
     const getDevices = async () => {
@@ -93,7 +109,7 @@ export default function CameraMode() {
 
     pc.onconnectionstatechange = () => {
       setConnectionState(pc.connectionState);
-      if (pc.connectionState !== 'connected') {
+      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
         setViewerStats(null);
       }
     };
@@ -111,7 +127,7 @@ export default function CameraMode() {
           if (!parameters.encodings) {
             parameters.encodings = [{}];
           }
-          parameters.degradationPreference = 'maintain-resolution';
+          parameters.degradationPreference = degradationRef.current as RTCDegradationPreference;
           parameters.encodings[0].maxBitrate = 300 * 1000 * 1000;
           await sender.setParameters(parameters);
         }
@@ -152,9 +168,7 @@ export default function CameraMode() {
       } else if (msg.type === 'candidate' && pcRef.current) {
         await pcRef.current.addIceCandidate(msg.candidate);
       } else if (msg.type === 'stats') {
-        if (pcRef.current && pcRef.current.connectionState === 'connected') {
-          setViewerStats(msg.stats);
-        }
+        setViewerStats(msg.stats);
       }
     };
 
@@ -218,9 +232,9 @@ export default function CameraMode() {
   }, [selectedResolution, selectedFps, selectedDeviceId, selectedRatio, currentWidth]);
 
   const formatBitrate = (bps?: number) => {
-    if (bps === undefined || isNaN(bps)) return '---';
+    if (bps === undefined || isNaN(bps) || bps < 0) return '---';
     if (bps >= 1000000) return `${(bps / 1000000).toFixed(2)} Mbps`;
-    if (bps >= 1000) return `${(bps / 1000).toFixed(0)} Kbps`;
+    if (bps >= 1000) return `${(bps / 1000).toFixed(0)} kbps`;
     return `${Math.round(bps)} bps`;
   };
 
@@ -294,6 +308,15 @@ export default function CameraMode() {
             <span>&gt; FPS: </span>
             <select value={selectedFps} onChange={(e) => setSelectedFps(Number(e.target.value))}>
               {FPS_OPTIONS.map(fps => <option key={fps} value={fps}>{fps} fps</option>)}
+            </select>
+          </div>
+
+          <div className="interactive-item">
+            <span>&gt; Degradation: </span>
+            <select value={selectedDegradation} onChange={(e) => setSelectedDegradation(e.target.value)}>
+              <option value="maintain-resolution">maintain-resolution</option>
+              <option value="maintain-framerate">maintain-framerate</option>
+              <option value="balanced">balanced</option>
             </select>
           </div>
         </div>
