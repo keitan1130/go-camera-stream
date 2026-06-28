@@ -3,17 +3,16 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"github.com/labstack/echo/v5"
 )
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// Room はシグナリング用の部屋を管理します
 type Room struct {
 	clients map[*websocket.Conn]string
 	mutex   sync.RWMutex
@@ -24,23 +23,20 @@ var (
 	roomsMutex sync.RWMutex
 )
 
-func getStreamID(r *http.Request) string {
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	if id == "" {
-		return "default"
-	}
-	return id
-}
-
-func handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+func handleWebSocket(c *echo.Context) error {
+	conn, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {
-		fmt.Println("WebSocket Error:", err)
-		return
+		fmt.Println("WebSocket Upgrade Error:", err)
+		return err
 	}
 	defer conn.Close()
 
-	roomID := getStreamID(r)
+	roomID := c.QueryParam("id")
+	if roomID == "" {
+		roomID = "default"
+	}
+
+	clientIP := c.RealIP()
 
 	roomsMutex.Lock()
 	if rooms[roomID] == nil {
@@ -57,9 +53,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	defer func() {
 		room.mutex.Lock()
+		role := room.clients[conn]
 		delete(room.clients, conn)
 		isEmpty := len(room.clients) == 0
 		room.mutex.Unlock()
+
+		fmt.Printf("[-] Disconnected: %s | from Room: %s | IP: %s\n", role, roomID, clientIP)
 
 		if isEmpty {
 			roomsMutex.Lock()
@@ -77,16 +76,21 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		role, _ := msg["role"].(string)
 		if role != "" {
 			room.mutex.Lock()
+			if room.clients[conn] == "unknown" {
+				fmt.Printf("[+] Connected: %s | Room: %s | IP: %s\n", role, roomID, clientIP)
+			}
 			room.clients[conn] = role
 			room.mutex.Unlock()
 		}
 
 		room.mutex.RLock()
-		for c, rRole := range room.clients {
-			if c != conn && rRole != role {
-				c.WriteJSON(msg)
+		for cConn, rRole := range room.clients {
+			if cConn != conn && rRole != role {
+				cConn.WriteJSON(msg)
 			}
 		}
 		room.mutex.RUnlock()
 	}
+
+	return nil
 }

@@ -14,7 +14,6 @@
   object-fit: contain;
 }
 
-/* 左上の緑色ミニマルUI */
 .green-minimal-ui {
   position: absolute;
   top: 10px;
@@ -27,7 +26,6 @@
   pointer-events: auto;
 }
 
-/* インラインセレクトボックス */
 .interactive-item {
   display: flex;
   align-items: center;
@@ -48,13 +46,11 @@
   margin: 0;
 }
 
-/* セレクトボックスの選択肢表示時の背景 */
 .green-minimal-ui select option {
   background: var(--background-color);
   color: var(--text-color);
 }
 
-/* 右上の操作ボタンパネル */
 .right-control-panel {
   position: absolute;
   top: 10px;
@@ -83,4 +79,57 @@
 .right-control-panel button.is-muted {
   color: var(--text-red-color);
   border-color: var(--text-red-color);
+}
+
+.selection-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100dvh;
+  width: 100vw;
+  background-color: var(--background-color);
+  color: var(--text-color);
+  text-align: center;
+  gap: 30px;
+}
+
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 8px;
+  width: 200px;
+}
+
+.input-group label {
+  font-size: 12px;
+  color: var(--text-color);
+}
+
+.input-group input {
+  width: 100%;
+  padding: 12px;
+  font-size: 12px;
+  border: 1px solid var(--text-color);
+  border-radius: 8px;
+  background-color: var(--background-color);
+  color: var(--text-color);
+}
+
+.button-group {
+  display: flex;
+  gap: 20px;
+}
+
+.mode-button {
+  padding: 10px 20px;
+  font-size: 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  width: 150px;
+  background-color: var(--background-color);
+  color: var(--text-color);
+  border: 1px solid var(--text-color);
 }

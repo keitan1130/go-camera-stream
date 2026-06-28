@@ -4,51 +4,63 @@ import (
 	"crypto/tls"
 	"embed"
 	"fmt"
-	"io/fs"
+	"log"
+	"net"
 	"net/http"
 	"os"
+
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 )
 
 //go:embed frontend/dist/*
 var frontendFS embed.FS
+
+func getLocalIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return "127.0.0.1"
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+}
 
 func main() {
 	appPort := os.Getenv("APP_PORT")
 	if appPort == "" {
 		appPort = "8080"
 	}
-	publicHost := os.Getenv("PUBLIC_HOST")
-	if publicHost == "" {
-		publicHost = "127.0.0.1"
-	}
+	publicHost := getLocalIP()
 
-	appMux := http.NewServeMux()
-	subFS, err := fs.Sub(frontendFS, "frontend/dist")
-	if err != nil {
-		fmt.Println("Warning: frontend/dist not found. Please build frontend first.")
-	} else {
-		appMux.Handle("/", http.FileServer(http.FS(subFS)))
-	}
+	e := echo.New()
 
-	appMux.HandleFunc("/ws", handleWebSocket)
+	e.Use(middleware.Recover())
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+    AllowOrigins: []string{fmt.Sprintf("https://%s:%s", publicHost, appPort)},
+    AllowMethods: []string{"GET", "POST", "OPTIONS"},
+	}))
+
+	subFS := echo.MustSubFS(frontendFS, "frontend/dist")
+	e.StaticFS("/", subFS)
+
+	e.GET("/ws", handleWebSocket)
 
 	cert, err := loadTLSCert(publicHost)
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	server := &http.Server{
 		Addr:      ":" + appPort,
-		Handler:   appMux,
+		Handler:   e,
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}},
 	}
 
-	fmt.Println("=== WebRTC P2P Signaling Server Started ===")
-	fmt.Printf("カメラ用URL: https://%s:%s/?id=1\n", publicHost, appPort)
-	fmt.Printf("OBSブラウザソース用URL: https://%s:%s/?id=1&mode=viewer\n", publicHost, appPort)
-	fmt.Println("===========================================")
+	fmt.Println("WebRTC P2P Signaling Server")
+	fmt.Printf("送信側URL: https://%s:%s/?id=1&mode=camera\n", publicHost, appPort)
+	fmt.Printf("受信側URL: https://%s:%s/?id=1&mode=viewer\n", publicHost, appPort)
 
-	if err := server.ListenAndServeTLS("", ""); err != nil {
-		panic(err)
+	if err := server.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+		log.Fatal(err)
 	}
 }

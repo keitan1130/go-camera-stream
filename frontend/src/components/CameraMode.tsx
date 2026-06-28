@@ -267,7 +267,7 @@ export default function CameraMode() {
     <div className="app-container">
       {showLeftUI && (
         <div className="green-minimal-ui">
-          <div>streamId: {streamId}</div>
+          <div>Room ID: {streamId}</div>
           <div>connectionState: {connectionState}</div>
           <div>iceConnectionState: {iceState}</div>
           <div>ping: {viewerStats?.currentRoundTripTime !== undefined ? `${(viewerStats.currentRoundTripTime * 1000).toFixed(1)}ms` : '---'}</div>
@@ -294,7 +294,7 @@ export default function CameraMode() {
           <div className="interactive-item">
             <span>&gt; Camera: </span>
             <select value={selectedDeviceId} onChange={(e) => setSelectedDeviceId(e.target.value)}>
-              {videoDevices.length === 0 && <option value="">Loading...</option>}
+              {videoDevices.length === 0 && <option value="">Loading</option>}
               {videoDevices.map(device => (
                 <option key={device.deviceId} value={device.deviceId}>
                   {device.label || `Camera (${device.deviceId.substring(0, 4)})`}
