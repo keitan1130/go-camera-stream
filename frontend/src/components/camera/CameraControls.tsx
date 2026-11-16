@@ -7,11 +7,11 @@ export default function CameraControls({
 }: CameraControlsProps) {
   return (
     <div className="right-control-panel">
-      <button disabled={isSwitching || source === 'camera'} onClick={onCamera}>
-        Camera
-      </button>
-      <button disabled={!screenSupported || isSwitching} onClick={onScreenShare}>
-        {isSwitching ? 'Selecting…' : source === 'screen' ? 'Change Screen' : 'Share Screen'}
+      <button
+        disabled={isSwitching || (source === 'camera' && !screenSupported)}
+        onClick={source === 'camera' ? onScreenShare : onCamera}
+      >
+        {isSwitching ? 'Selecting…' : source === 'camera' ? 'Share Screen' : 'Camera'}
       </button>
       <button disabled={!pipSupported || !previewReady || source === 'idle'} onClick={onPip}>
         {pipActive ? 'Exit PiP' : 'PiP'}
