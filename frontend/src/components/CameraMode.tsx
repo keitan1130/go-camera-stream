@@ -32,8 +32,6 @@ export default function CameraMode() {
         className="video-stream"
         style={{
           ...previewStyle,
-          display:
-            controls.showPreview || controls.pipActive ? "block" : "none",
           opacity: controls.showPreview ? 1 : 0,
         }}
       />

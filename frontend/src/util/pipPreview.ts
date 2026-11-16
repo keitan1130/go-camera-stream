@@ -11,6 +11,7 @@ interface PipPreviewOptions {
   getQuality: () => ScreenQuality;
   canRestore: () => boolean;
   isPreviewVisible: () => boolean;
+  standby?: boolean;
 }
 
 export function createPipPreview({
@@ -20,6 +21,7 @@ export function createPipPreview({
   getQuality,
   canRestore,
   isPreviewVisible,
+  standby = false,
 }: PipPreviewOptions) {
   const input = document.createElement("video");
   input.muted = true;
@@ -37,6 +39,7 @@ export function createPipPreview({
   document.body.appendChild(input);
   let output: MediaStream | null = null;
   let disposed = false;
+  let active = !standby;
   let frameCallback = 0;
   let animationFrame = 0;
   let lastFrame = -Infinity;
@@ -81,7 +84,7 @@ export function createPipPreview({
     );
   };
   const schedule = () => {
-    if (disposed) return;
+    if (disposed || !active) return;
     if (typeof input.requestVideoFrameCallback === "function") {
       frameCallback = input.requestVideoFrameCallback((now) => {
         draw(now);
@@ -94,12 +97,27 @@ export function createPipPreview({
       });
     }
   };
+  const deactivate = () => {
+    active = false;
+    if (frameCallback) input.cancelVideoFrameCallback(frameCallback);
+    if (animationFrame) cancelAnimationFrame(animationFrame);
+    frameCallback = 0;
+    animationFrame = 0;
+    input.pause();
+  };
+  const activate = () => {
+    if (disposed || active) return;
+    active = true;
+    lastFrame = -Infinity;
+    draw(performance.now());
+    void input.play().catch(() => {});
+    schedule();
+  };
   const dispose = () => {
     if (disposed) return;
     disposed = true;
     cancelReady?.();
-    if (frameCallback) input.cancelVideoFrameCallback(frameCallback);
-    if (animationFrame) cancelAnimationFrame(animationFrame);
+    deactivate();
     if (output && video.srcObject === output && canRestore()) {
       video.srcObject = stream;
       if (isPreviewVisible()) void video.play().catch(() => {});
@@ -150,11 +168,18 @@ export function createPipPreview({
       throw new DOMException("PiP preparation cancelled", "AbortError");
     draw(performance.now());
     output = canvas.captureStream(30);
-    schedule();
+    if (standby) {
+      // Publish a frame after captureStream attaches; no continuous standby loop.
+      animationFrame = requestAnimationFrame((now) => {
+        lastFrame = -Infinity;
+        draw(now);
+      });
+    } else schedule();
     video.srcObject = output;
     await waitForPlayback(video);
     if (disposed || !canRestore())
       throw new DOMException("PiP preparation cancelled", "AbortError");
+    if (standby) deactivate();
   })();
-  return { ready, dispose };
+  return { ready, dispose, activate, deactivate };
 }

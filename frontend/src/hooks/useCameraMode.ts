@@ -9,6 +9,7 @@ import {
   rtcConfig,
   type WebRTCStats,
 } from "../constants";
+import { isIOSDevice } from "../util/displayOrientation";
 import { createPipPreview } from "../util/pipPreview";
 import {
   constrainScreenTrack,
@@ -17,6 +18,7 @@ import {
 } from "../util/screenQuality";
 import { DEFAULT_VIDEO_PRESENTATION } from "../util/videoPresentation";
 import useCaptureSettings from "./useCaptureSettings";
+import usePipStandby from "./usePipStandby";
 import useScreenOrientation from "./useScreenOrientation";
 import useVideoPresentation from "./useVideoPresentation";
 
@@ -24,12 +26,7 @@ import type {
   ScreenRotation,
   VideoPresentation,
 } from "../util/videoPresentation";
-
-type SafariVideo = HTMLVideoElement & {
-  webkitSupportsPresentationMode?: (mode: string) => boolean;
-  webkitSetPresentationMode?: (mode: string) => void;
-  webkitPresentationMode?: string;
-};
+import type { SafariVideo } from "./usePipStandby";
 
 export default function useCameraMode() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -170,6 +167,19 @@ export default function useCameraMode() {
     cameraFps: selectedFps,
     degradation: selectedDegradation,
   });
+  const needsPipStandby =
+    source === "screen" &&
+    isIOSDevice() &&
+    (Boolean(document.pictureInPictureEnabled) ||
+      "webkitSetPresentationMode" in HTMLVideoElement.prototype);
+  const { standbyRef, ready: standbyReady } = usePipStandby({
+    enabled: needsPipStandby,
+    streamRef,
+    presentationRef,
+    qualityRef,
+    onActive: setPipActive,
+    onError: setCaptureError,
+  });
   const senderQueueRef = useRef(Promise.resolve());
   const screenQueueRef = useRef(Promise.resolve());
 
@@ -231,24 +241,26 @@ export default function useCameraMode() {
     ++pipRequestRef.current;
     pipPreparingRef.current = false;
     setPipPreparing(false);
-    const video = videoRef.current as SafariVideo | null;
+    const video =
+      standbyRef.current?.video || (videoRef.current as SafariVideo | null);
     if (video && document.pictureInPictureElement === video) {
       void document.exitPictureInPicture().catch(() => {});
     } else if (video?.webkitPresentationMode === "picture-in-picture") {
       video.webkitSetPresentationMode?.("inline");
     }
+    standbyRef.current?.preview.deactivate();
     restorePreview();
     setPipActive(false);
-  }, [restorePreview]);
+  }, [restorePreview, standbyRef]);
 
   useEffect(() => {
     previewVisibleRef.current = showPreview;
     const video = videoRef.current;
     if (!video || source === "idle") return;
-    if (showPreview || pipActive || pipPreparing)
+    if (showPreview || ((pipActive || pipPreparing) && !standbyRef.current))
       void video.play().catch(() => {});
     else video.pause();
-  }, [showPreview, source, pipActive, pipPreparing]);
+  }, [showPreview, source, pipActive, pipPreparing, standbyRef]);
 
   useEffect(() => {
     if (!pipActive && !pipPreparing) restorePreview();
@@ -556,7 +568,7 @@ export default function useCameraMode() {
       });
       previousTrack?.stop();
       setTrackMuted(track.muted);
-      setPreviewReady(true);
+      setPreviewReady(false);
       track.onmute = () => setTrackMuted(true);
       track.onunmute = () => setTrackMuted(false);
       track.onended = () => {
@@ -742,6 +754,7 @@ export default function useCameraMode() {
       );
     };
     const onReady = () => {
+      setPreviewReady(video.readyState >= HTMLMediaElement.HAVE_METADATA);
       updatePip();
     };
     updatePip();
@@ -758,7 +771,8 @@ export default function useCameraMode() {
   }, []);
 
   const togglePip = async () => {
-    const video = videoRef.current as SafariVideo | null;
+    const standby = standbyRef.current;
+    const video = standby?.video || (videoRef.current as SafariVideo | null);
     const original = streamRef.current;
     if (!video || !original || pipPreparingRef.current) return;
     if (
@@ -773,7 +787,12 @@ export default function useCameraMode() {
     setPipPreparing(true);
     setCaptureError("");
     try {
-      if (streamKindRef.current === "screen") {
+      if (standby) {
+        if (!standby.ready) return;
+        standby.preview.activate();
+        // Do not await play or frame preparation before Safari's PiP call.
+        void video.play().catch(() => {});
+      } else if (streamKindRef.current === "screen") {
         const pipPreview = createPipPreview({
           video,
           stream: original,
@@ -787,13 +806,11 @@ export default function useCameraMode() {
         if (request !== pipRequestRef.current) return;
         setPipPreviewActive(true);
       } else {
-        await video.play();
+        void video.play().catch(() => {});
       }
       if (request !== pipRequestRef.current || streamRef.current !== original)
         return;
-      if (document.pictureInPictureEnabled && video.requestPictureInPicture) {
-        await video.requestPictureInPicture();
-      } else if (video.webkitSupportsPresentationMode?.("picture-in-picture")) {
+      if (video.webkitSupportsPresentationMode?.("picture-in-picture")) {
         video.webkitSetPresentationMode?.("picture-in-picture");
         if (video.webkitPresentationMode !== "picture-in-picture") {
           await new Promise<void>((resolve, reject) => {
@@ -814,6 +831,11 @@ export default function useCameraMode() {
             video.addEventListener("webkitpresentationmodechanged", check);
           });
         }
+      } else if (
+        document.pictureInPictureEnabled &&
+        video.requestPictureInPicture
+      ) {
+        await video.requestPictureInPicture();
       } else {
         throw new Error("PiP is unavailable for this stream");
       }
@@ -827,7 +849,10 @@ export default function useCameraMode() {
           `PiP: ${error instanceof Error ? error.message : "Failed"}`,
         );
       }
-      if (request === pipRequestRef.current) restorePreview();
+      if (request === pipRequestRef.current) {
+        standby?.preview.deactivate();
+        restorePreview();
+      }
     } finally {
       if (request === pipRequestRef.current) {
         pipPreparingRef.current = false;
@@ -883,8 +908,17 @@ export default function useCameraMode() {
       source,
       isSwitching,
       screenSupported,
-      pipSupported,
-      previewReady: previewReady && !pipPreparing,
+      pipSupported: needsPipStandby
+        ? Boolean(
+            standbyReady &&
+              (document.pictureInPictureEnabled ||
+                standbyRef.current?.video.webkitSupportsPresentationMode?.(
+                  "picture-in-picture",
+                )),
+          )
+        : pipSupported,
+      previewReady:
+        previewReady && !pipPreparing && (!needsPipStandby || standbyReady),
       pipActive,
       showLeftUI,
       showPreview,
