@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ASPECT_RATIOS,
+  DEFAULT_FPS,
+  DEFAULT_RESOLUTION,
   FPS_OPTIONS,
   RESOLUTIONS,
   rtcConfig,
@@ -13,6 +15,7 @@ import {
   getScreenEncoding,
 } from "../util/screenQuality";
 import useCaptureSettings from "./useCaptureSettings";
+import useScreenOrientation from "./useScreenOrientation";
 
 type SafariVideo = HTMLVideoElement & {
   webkitSupportsPresentationMode?: (mode: string) => boolean;
@@ -77,8 +80,13 @@ export default function useCameraMode() {
     getSavedState("camera_deviceId", ""),
   );
   const [selectedResolution, setSelectedResolution] = useState(() => {
-    const savedLabel = getSavedState("camera_resolution", RESOLUTIONS[0].label);
-    return RESOLUTIONS.find((r) => r.label === savedLabel) || RESOLUTIONS[0];
+    const savedLabel = getSavedState(
+      "camera_resolution",
+      DEFAULT_RESOLUTION.label,
+    );
+    return (
+      RESOLUTIONS.find((r) => r.label === savedLabel) || DEFAULT_RESOLUTION
+    );
   });
   const [selectedRatio, setSelectedRatio] = useState(() => {
     const savedLabel = getSavedState("camera_ratio", ASPECT_RATIOS[0].label);
@@ -86,17 +94,18 @@ export default function useCameraMode() {
       ASPECT_RATIOS.find((r) => r.label === savedLabel) || ASPECT_RATIOS[0]
     );
   });
-  const [selectedFps, setSelectedFps] = useState(() =>
-    getSavedState("camera_fps", FPS_OPTIONS[0]),
-  );
+  const [selectedFps, setSelectedFps] = useState(() => {
+    const saved = getSavedState("camera_fps", DEFAULT_FPS);
+    return FPS_OPTIONS.includes(saved) ? saved : DEFAULT_FPS;
+  });
 
   const [screenResolution, setScreenResolution] = useState(() => {
-    const saved = getSavedState("screen_resolution", "1080p");
-    return RESOLUTIONS.find((r) => r.label === saved) || RESOLUTIONS[2];
+    const saved = getSavedState("screen_resolution", DEFAULT_RESOLUTION.label);
+    return RESOLUTIONS.find((r) => r.label === saved) || DEFAULT_RESOLUTION;
   });
   const [screenFps, setScreenFps] = useState(() => {
-    const saved = getSavedState("screen_fps", 30);
-    return FPS_OPTIONS.includes(saved) ? saved : 30;
+    const saved = getSavedState("screen_fps", DEFAULT_FPS);
+    return FPS_OPTIONS.includes(saved) ? saved : DEFAULT_FPS;
   });
 
   const [selectedDegradation, setSelectedDegradation] = useState<string>(() =>
@@ -464,7 +473,7 @@ export default function useCameraMode() {
       track.onunmute = () => setTrackMuted(false);
       track.onended = () => {
         if (streamRef.current !== stream) return;
-        clonedTrack.stop();
+        rtcTrackRef.current?.stop();
         stream.getTracks().forEach((t) => {
           t.stop();
         });
@@ -492,6 +501,83 @@ export default function useCameraMode() {
     },
     [createPeerConnectionAndSendOffer, configureSender, refreshCaptureSettings],
   );
+
+  const outputQueueRef = useRef(Promise.resolve());
+  const outputRequestRef = useRef(0);
+  const replaceScreenOutput = useCallback(
+    (output: MediaStream, original: MediaStream) => {
+      const request = ++outputRequestRef.current;
+      const update = async () => {
+        if (
+          request !== outputRequestRef.current ||
+          streamRef.current !== original ||
+          streamKindRef.current !== "screen"
+        )
+          return;
+        const track = output.getVideoTracks()[0];
+        if (track?.readyState !== "live") return;
+        const nextTrack = track.clone();
+        nextTrack.contentHint = "detail";
+        nextTrack.enabled = !isVideoMutedRef.current;
+        const sender = pcRef.current
+          ?.getSenders()
+          .find((s) => s.track?.kind === "video" || s.track === null);
+        let renegotiate = false;
+        try {
+          if (sender) await sender.replaceTrack(nextTrack);
+        } catch (error) {
+          if (
+            error instanceof DOMException &&
+            error.name === "InvalidModificationError"
+          ) {
+            renegotiate = true;
+          } else {
+            nextTrack.stop();
+            throw error;
+          }
+        }
+        if (
+          request !== outputRequestRef.current ||
+          streamRef.current !== original
+        ) {
+          if (sender && sender.track === nextTrack)
+            await sender.replaceTrack(rtcTrackRef.current);
+          nextTrack.stop();
+          return;
+        }
+        const previous = rtcTrackRef.current;
+        rtcTrackRef.current = nextTrack;
+        previous?.stop();
+        if (videoRef.current) {
+          videoRef.current.srcObject = output;
+          void videoRef.current.play().catch(() => {});
+        }
+        if (sender && !renegotiate) await configureSender(sender);
+        else if (pcRef.current) await createPeerConnectionAndSendOffer();
+        refreshCaptureSettings();
+      };
+      outputQueueRef.current = outputQueueRef.current
+        .then(update)
+        .catch((error) => {
+          if (streamRef.current === original) {
+            setCaptureError(
+              `Screen: ${error instanceof Error ? error.message : "Rotation failed"}`,
+            );
+          }
+        });
+      return outputQueueRef.current;
+    },
+    [configureSender, createPeerConnectionAndSendOffer, refreshCaptureSettings],
+  );
+
+  useScreenOrientation({
+    enabled: source === "screen",
+    streamRef,
+    shortEdge: screenResolution.height,
+    frameRate: screenFps,
+    onOutput: replaceScreenOutput,
+    onError: setCaptureError,
+  });
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: cameraRequest intentionally restarts capture when retrying the same camera.
   useEffect(() => {

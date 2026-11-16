@@ -9,14 +9,14 @@ export default function useCaptureSettings(
   const [captureSettings, setCaptureSettings] =
     useState<MediaTrackSettings | null>(null);
   const refreshCaptureSettings = useCallback(() => {
-    const track = streamRef.current?.getVideoTracks()[0];
     const video = videoRef.current;
+    const output =
+      video?.srcObject instanceof MediaStream
+        ? video.srcObject
+        : streamRef.current;
+    const track = output?.getVideoTracks()[0];
     const settings = track?.readyState === "live" ? track.getSettings() : null;
-    if (
-      settings &&
-      video?.readyState &&
-      video.srcObject === streamRef.current
-    ) {
+    if (settings && video?.readyState && video.srcObject === output) {
       // Intrinsic video dimensions follow rotation, unlike the requested camera size.
       settings.width = video.videoWidth || settings.width;
       settings.height = video.videoHeight || settings.height;

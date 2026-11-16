@@ -9,6 +9,9 @@ export const RESOLUTIONS = [
   { label: "144p", height: 144 },
 ];
 
+export const DEFAULT_RESOLUTION = RESOLUTIONS[2];
+export const DEFAULT_FPS = 30;
+
 export const ASPECT_RATIOS = [
   { label: "16:9", widthRatio: 16, heightRatio: 9 },
   { label: "4:3", widthRatio: 4, heightRatio: 3 },
