@@ -8,9 +8,7 @@ export default function CameraStats({
   trackMuted,
   viewerStats,
   localCodec,
-  currentWidth,
-  selectedResolution,
-  selectedFps,
+  captureSettings,
 }: CameraStatsProps) {
   const formatBitrate = (bps?: number) => {
     if (bps === undefined || Number.isNaN(bps) || bps < 0) return "---";
@@ -46,14 +44,20 @@ export default function CameraStats({
       </div>
 
       <div>
-        {currentWidth}x{selectedResolution.height} /{" "}
+        {captureSettings?.width && captureSettings?.height
+          ? `${captureSettings.width}x${captureSettings.height}`
+          : "---"}{" "}
+        /{" "}
         {viewerStats?.frameWidth && viewerStats?.frameHeight
           ? `${viewerStats.frameWidth}x${viewerStats.frameHeight}`
           : "---"}
       </div>
 
       <div>
-        {selectedFps} /{" "}
+        {captureSettings?.frameRate !== undefined
+          ? Math.round(captureSettings.frameRate)
+          : "---"}{" "}
+        /{" "}
         {viewerStats?.framesPerSecond
           ? `${Math.round(viewerStats.framesPerSecond)}`
           : "---"}{" "}

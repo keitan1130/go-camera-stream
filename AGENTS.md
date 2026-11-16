@@ -44,7 +44,8 @@ npm run lint     # ソースのBiome lint
 npm run check    # ソース・設定のlint、整形、import順序
 npm run format   # ソース・設定の自動修正と整形
 npm run build    # TypeScript型検査とViteビルド
-npm run ci       # check + build
+npm run test     # 画面共有の画質・縦横比制御の回帰テスト
+npm run ci       # check + test + build
 ```
 
 リポジトリルートで実行します。

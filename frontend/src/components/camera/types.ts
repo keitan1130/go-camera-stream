@@ -14,9 +14,7 @@ export interface CameraStatsProps {
   trackMuted: boolean;
   viewerStats: WebRTCStats | null;
   localCodec: string;
-  currentWidth: number;
-  selectedResolution: Resolution;
-  selectedFps: number;
+  captureSettings: MediaTrackSettings | null;
 }
 
 export interface CameraSettingsProps {

@@ -20,7 +20,8 @@ npm run build     # TypeScriptの型検査と本番ビルド
 npm run lint      # ソースのBiome lint
 npm run check     # ソース・設定のlint・整形・import順序を確認
 npm run format    # 自動修正と整形
-npm run ci        # check + build
+npm run test      # 画面共有の画質・縦横比制御の回帰テスト
+npm run ci        # check + test + build
 npm run preview   # 本番ビルドのプレビュー
 ```
 

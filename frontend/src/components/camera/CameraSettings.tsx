@@ -38,7 +38,7 @@ export default function CameraSettings({
       <div className="interactive-item">
         <span>&gt; Resolution: </span>
         <select
-          disabled={source === "screen" || isSwitching}
+          disabled={isSwitching}
           value={selectedResolution.label}
           onChange={(e) => {
             const res = RESOLUTIONS.find((r) => r.label === e.target.value);
@@ -57,12 +57,13 @@ export default function CameraSettings({
         <span>&gt; AspectRatio: </span>
         <select
           disabled={source === "screen" || isSwitching}
-          value={selectedRatio.label}
+          value={source === "screen" ? "auto" : selectedRatio.label}
           onChange={(e) => {
             const ratio = ASPECT_RATIOS.find((r) => r.label === e.target.value);
             if (ratio) setSelectedRatio(ratio);
           }}
         >
+          {source === "screen" && <option value="auto">Auto</option>}
           {ASPECT_RATIOS.map((ratio) => (
             <option key={ratio.label} value={ratio.label}>
               {ratio.label}
@@ -74,7 +75,7 @@ export default function CameraSettings({
       <div className="interactive-item">
         <span>&gt; FPS: </span>
         <select
-          disabled={source === "screen" || isSwitching}
+          disabled={isSwitching}
           value={selectedFps}
           onChange={(e) => setSelectedFps(Number(e.target.value))}
         >

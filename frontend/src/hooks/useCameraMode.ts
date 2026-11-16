@@ -7,6 +7,12 @@ import {
   rtcConfig,
   type WebRTCStats,
 } from "../constants";
+import {
+  constrainScreenTrack,
+  getScreenBounds,
+  getScreenEncoding,
+} from "../util/screenQuality";
+import useCaptureSettings from "./useCaptureSettings";
 
 type SafariVideo = HTMLVideoElement & {
   webkitSupportsPresentationMode?: (mode: string) => boolean;
@@ -84,10 +90,18 @@ export default function useCameraMode() {
     getSavedState("camera_fps", FPS_OPTIONS[0]),
   );
 
+  const [screenResolution, setScreenResolution] = useState(() => {
+    const saved = getSavedState("screen_resolution", "1080p");
+    return RESOLUTIONS.find((r) => r.label === saved) || RESOLUTIONS[2];
+  });
+  const [screenFps, setScreenFps] = useState(() => {
+    const saved = getSavedState("screen_fps", 30);
+    return FPS_OPTIONS.includes(saved) ? saved : 30;
+  });
+
   const [selectedDegradation, setSelectedDegradation] = useState<string>(() =>
     getSavedState("camera_degradation", "maintain-resolution"),
   );
-  const degradationRef = useRef(selectedDegradation);
 
   const isVideoMutedRef = useRef(isVideoMuted);
   useEffect(() => {
@@ -96,11 +110,78 @@ export default function useCameraMode() {
 
   const streamRef = useRef<MediaStream | null>(null);
   const rtcTrackRef = useRef<MediaStreamTrack | null>(null);
+  const streamKindRef = useRef<"camera" | "screen">("camera");
+  const { captureSettings, refreshCaptureSettings } = useCaptureSettings(
+    videoRef,
+    streamRef,
+  );
+  const qualityRef = useRef({
+    shortEdge: screenResolution.height,
+    frameRate: screenFps,
+    cameraFps: selectedFps,
+    degradation: selectedDegradation,
+  });
+  const senderQueueRef = useRef(Promise.resolve());
+  const screenQueueRef = useRef(Promise.resolve());
+
+  const configureSender = useCallback((sender: RTCRtpSender) => {
+    const update = async () => {
+      if (sender.track?.readyState !== "live") return;
+      const params = sender.getParameters();
+      if (!params.encodings?.length) return;
+      const quality = qualityRef.current;
+      params.degradationPreference =
+        quality.degradation as RTCDegradationPreference;
+      if (streamKindRef.current === "screen") {
+        const { width = 1, height = 1 } = sender.track.getSettings();
+        Object.assign(
+          params.encodings[0],
+          getScreenEncoding(width, height, quality),
+        );
+      } else {
+        // Restore the camera profile after leaving screen sharing.
+        Object.assign(params.encodings[0], {
+          maxBitrate: 300_000_000,
+          maxFramerate: quality.cameraFps,
+          scaleResolutionDownBy: 1,
+        });
+      }
+      try {
+        await sender.setParameters(params);
+      } catch {
+        // Some Safari versions do not support encoder scaling. Capture constraints
+        // still bound the size; keep the bitrate/FPS limits where supported.
+        const fallback = sender.getParameters();
+        if (!fallback.encodings?.length) return;
+        fallback.encodings[0].maxBitrate = params.encodings[0].maxBitrate;
+        fallback.encodings[0].maxFramerate = params.encodings[0].maxFramerate;
+        await sender.setParameters(fallback);
+      }
+    };
+    senderQueueRef.current = senderQueueRef.current
+      .then(update)
+      .catch((error) => {
+        if (pcRef.current?.getSenders().includes(sender)) {
+          setCaptureError(
+            `Video: ${error instanceof Error ? error.message : "Failed"}`,
+          );
+        }
+      });
+    return senderQueueRef.current;
+  }, []);
 
   const currentWidth = Math.round(
     (selectedResolution.height * selectedRatio.widthRatio) /
       selectedRatio.heightRatio,
   );
+
+  useEffect(() => {
+    localStorage.setItem(
+      "screen_resolution",
+      JSON.stringify(screenResolution.label),
+    );
+    localStorage.setItem("screen_fps", JSON.stringify(screenFps));
+  }, [screenResolution, screenFps]);
 
   useEffect(() => {
     localStorage.setItem("camera_showLeftUI", JSON.stringify(showLeftUI));
@@ -129,24 +210,96 @@ export default function useCameraMode() {
   ]);
 
   useEffect(() => {
-    degradationRef.current = selectedDegradation;
-    if (pcRef.current) {
-      const sender = pcRef.current
-        .getSenders()
-        .find((s) => s.track?.kind === "video");
-      if (sender) {
-        const params = sender.getParameters();
-        params.degradationPreference =
-          selectedDegradation as RTCDegradationPreference;
-        sender
-          .setParameters(params)
-          .catch((e) => console.error("Degradation update failed:", e));
-      }
-    }
-  }, [selectedDegradation]);
+    qualityRef.current = {
+      shortEdge: screenResolution.height,
+      frameRate: screenFps,
+      cameraFps: selectedFps,
+      degradation: selectedDegradation,
+    };
+    const sender = pcRef.current
+      ?.getSenders()
+      .find((s) => s.track?.kind === "video");
+    if (sender) void configureSender(sender);
+  }, [
+    screenResolution,
+    screenFps,
+    selectedFps,
+    selectedDegradation,
+    configureSender,
+  ]);
+
+  useEffect(() => {
+    if (source !== "screen" || streamKindRef.current !== "screen") return;
+    let cancelled = false;
+    const stream = streamRef.current;
+    const tracks = [stream?.getVideoTracks()[0], rtcTrackRef.current];
+    screenQueueRef.current = screenQueueRef.current
+      .then(async () => {
+        if (
+          cancelled ||
+          streamRef.current !== stream ||
+          streamKindRef.current !== "screen"
+        )
+          return;
+        const quality = {
+          shortEdge: screenResolution.height,
+          frameRate: screenFps,
+        };
+        const results = await Promise.allSettled(
+          tracks.map((track) =>
+            track?.readyState === "live"
+              ? constrainScreenTrack(track, quality)
+              : undefined,
+          ),
+        );
+        if (
+          cancelled ||
+          streamRef.current !== stream ||
+          streamKindRef.current !== "screen"
+        )
+          return;
+        const failure = results.find((result) => result.status === "rejected");
+        if (failure?.status === "rejected") {
+          setCaptureError(
+            `Screen: ${failure.reason instanceof Error ? failure.reason.message : "Quality update failed"}`,
+          );
+        } else {
+          setCaptureError("");
+        }
+        const sender = pcRef.current
+          ?.getSenders()
+          .find((s) => s.track?.kind === "video");
+        if (sender) await configureSender(sender);
+        refreshCaptureSettings();
+      })
+      .catch((error) => {
+        if (!cancelled)
+          setCaptureError(
+            `Screen: ${error instanceof Error ? error.message : "Failed"}`,
+          );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    source,
+    screenResolution,
+    screenFps,
+    configureSender,
+    refreshCaptureSettings,
+  ]);
+
+  useEffect(() => {
+    const sender = pcRef.current
+      ?.getSenders()
+      .find((s) => s.track?.kind === "video");
+    if (source === "screen" && captureSettings && sender)
+      void configureSender(sender);
+  }, [source, captureSettings, configureSender]);
 
   useEffect(() => {
     const localStatsInterval = setInterval(async () => {
+      refreshCaptureSettings();
       if (pcRef.current && pcRef.current.connectionState === "connected") {
         const stats = await pcRef.current.getStats();
         stats.forEach((report) => {
@@ -167,7 +320,7 @@ export default function useCameraMode() {
     }, 2000);
 
     return () => clearInterval(localStatsInterval);
-  }, []);
+  }, [refreshCaptureSettings]);
 
   const createPeerConnectionAndSendOffer = useCallback(async () => {
     if (pcRef.current) pcRef.current.close();
@@ -192,14 +345,7 @@ export default function useCameraMode() {
 
     if (rtcTrackRef.current && streamRef.current) {
       const sender = pc.addTrack(rtcTrackRef.current, streamRef.current);
-      const parameters = sender.getParameters();
-      if (!parameters.encodings) {
-        parameters.encodings = [{}];
-      }
-      parameters.degradationPreference =
-        degradationRef.current as RTCDegradationPreference;
-      parameters.encodings[0].maxBitrate = 300 * 1000 * 1000;
-      await sender.setParameters(parameters);
+      await configureSender(sender);
     }
 
     pc.onicecandidate = (e) => {
@@ -221,7 +367,7 @@ export default function useCameraMode() {
         JSON.stringify({ role: "camera", type: "offer", sdp: offer }),
       );
     }
-  }, []);
+  }, [configureSender]);
 
   useEffect(() => {
     const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -257,7 +403,7 @@ export default function useCameraMode() {
   }, [streamId, createPeerConnectionAndSendOffer]);
 
   const installStream = useCallback(
-    async (stream: MediaStream, request: number) => {
+    async (stream: MediaStream, request: number, kind: "camera" | "screen") => {
       const track = stream.getVideoTracks()[0];
       if (
         !track ||
@@ -270,7 +416,9 @@ export default function useCameraMode() {
         return false;
       }
 
+      track.contentHint = kind === "screen" ? "detail" : "motion";
       const clonedTrack = track.clone();
+      clonedTrack.contentHint = track.contentHint;
       clonedTrack.enabled = !isVideoMutedRef.current;
       const previousStream = streamRef.current;
       const previousTrack = rtcTrackRef.current;
@@ -304,6 +452,7 @@ export default function useCameraMode() {
         }
       }
 
+      streamKindRef.current = kind;
       streamRef.current = stream;
       rtcTrackRef.current = clonedTrack;
       previousStream?.getTracks().forEach((t) => {
@@ -326,6 +475,7 @@ export default function useCameraMode() {
         setPreviewReady(false);
         setTrackMuted(false);
         if (videoRef.current) videoRef.current.srcObject = null;
+        refreshCaptureSettings();
       };
 
       if (videoRef.current) {
@@ -335,10 +485,12 @@ export default function useCameraMode() {
       }
       if (pcRef.current && (!sender || sender.track !== clonedTrack)) {
         await createPeerConnectionAndSendOffer();
+      } else if (sender) {
+        await configureSender(sender);
       }
       return true;
     },
-    [createPeerConnectionAndSendOffer],
+    [createPeerConnectionAndSendOffer, configureSender, refreshCaptureSettings],
   );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: cameraRequest intentionally restarts capture when retrying the same camera.
@@ -368,7 +520,7 @@ export default function useCameraMode() {
           });
           return;
         }
-        if (await installStream(stream, request)) {
+        if (await installStream(stream, request, "camera")) {
           setSource("camera");
           setCaptureError("");
           const devices = await navigator.mediaDevices.enumerateDevices();
@@ -415,11 +567,18 @@ export default function useCameraMode() {
     setCaptureError("");
     try {
       // Keep this call directly in the click handler: browsers require user activation.
+      const longEdge = getScreenBounds(screenResolution.height, false).width;
       const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: { ideal: selectedFps, max: selectedFps } },
+        // Start with symmetric limits so a portrait display isn't forced into
+        // landscape bounds. Refine the bounds after reading the actual stream.
+        video: {
+          width: { max: longEdge },
+          height: { max: longEdge },
+          frameRate: { ideal: screenFps, max: screenFps },
+        },
         audio: false,
       });
-      if (await installStream(stream, request)) {
+      if (await installStream(stream, request, "screen")) {
         setCaptureMode("screen");
         setSource("screen");
       }
@@ -508,9 +667,7 @@ export default function useCameraMode() {
       trackMuted,
       viewerStats,
       localCodec,
-      currentWidth,
-      selectedResolution,
-      selectedFps,
+      captureSettings,
     },
     settings: {
       source,
@@ -518,12 +675,14 @@ export default function useCameraMode() {
       videoDevices,
       selectedDeviceId,
       setSelectedDeviceId,
-      selectedResolution,
-      setSelectedResolution,
+      selectedResolution:
+        source === "screen" ? screenResolution : selectedResolution,
+      setSelectedResolution:
+        source === "screen" ? setScreenResolution : setSelectedResolution,
       selectedRatio,
       setSelectedRatio,
-      selectedFps,
-      setSelectedFps,
+      selectedFps: source === "screen" ? screenFps : selectedFps,
+      setSelectedFps: source === "screen" ? setScreenFps : setSelectedFps,
       selectedDegradation,
       setSelectedDegradation,
     },
