@@ -91,6 +91,10 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
+`docker compose up -d --build`でビルドする際、ベースイメージの更新を確認します。
+Node.jsは26系、Goは1.27系、Alpineは3系の新しいイメージがあれば取得し、変更がなければキャッシュを再利用します。
+Docker単体でビルドする場合は、`docker build --pull -t camera-stream .`を使用してください。
+
 ---
 
 ## 開発環境（ローカル開発での起動）

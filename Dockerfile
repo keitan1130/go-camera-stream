@@ -8,7 +8,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: バックエンドのビルド
-FROM golang:1.27.4-alpine AS backend-builder
+FROM golang:1.27-alpine AS backend-builder
 WORKDIR /app
 COPY go.mod go.sum* ./
 RUN go mod download
@@ -17,7 +17,7 @@ COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 RUN go build -o server .
 
 # Stage 3: 実行用コンテナ
-FROM alpine:latest
+FROM alpine:3
 WORKDIR /root/
 COPY --from=backend-builder /app/server .
 # ポートはdocker-composeで制御するためEXPOSEは省略可能
