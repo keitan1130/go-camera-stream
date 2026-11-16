@@ -24,3 +24,17 @@ export function isVideoPresentation(
     typeof data.portrait === "boolean"
   );
 }
+
+export function getEffectiveRotation(
+  presentation: VideoPresentation,
+  width: number,
+  height: number,
+): VideoRotation {
+  return presentation.auto &&
+    presentation.rotation % 180 !== 0 &&
+    width &&
+    height &&
+    width < height === presentation.portrait
+    ? 0
+    : presentation.rotation;
+}

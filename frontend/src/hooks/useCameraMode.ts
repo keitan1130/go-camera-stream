@@ -9,6 +9,7 @@ import {
   rtcConfig,
   type WebRTCStats,
 } from "../constants";
+import { createPipPreview } from "../util/pipPreview";
 import {
   constrainScreenTrack,
   getScreenBounds,
@@ -17,6 +18,7 @@ import {
 import { DEFAULT_VIDEO_PRESENTATION } from "../util/videoPresentation";
 import useCaptureSettings from "./useCaptureSettings";
 import useScreenOrientation from "./useScreenOrientation";
+import useVideoPresentation from "./useVideoPresentation";
 
 import type {
   ScreenRotation,
@@ -68,6 +70,14 @@ export default function useCameraMode() {
   const [captureError, setCaptureError] = useState("");
   const [trackMuted, setTrackMuted] = useState(false);
   const [pipActive, setPipActive] = useState(false);
+  const [pipPreparing, setPipPreparing] = useState(false);
+  const [pipPreviewActive, setPipPreviewActive] = useState(false);
+  const pipPreparingRef = useRef(false);
+  const pipRequestRef = useRef(0);
+  const pipPreviewRef = useRef<ReturnType<typeof createPipPreview> | null>(
+    null,
+  );
+  const previewVisibleRef = useRef(showPreview);
   const [pipSupported, setPipSupported] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
   const captureRequestRef = useRef(0);
@@ -121,6 +131,11 @@ export default function useCameraMode() {
       : "auto";
   });
   const presentationRef = useRef<VideoPresentation>(DEFAULT_VIDEO_PRESENTATION);
+  const [presentation, setPresentation] = useState(DEFAULT_VIDEO_PRESENTATION);
+  const previewStyle = useVideoPresentation(
+    videoRef,
+    pipPreviewActive ? DEFAULT_VIDEO_PRESENTATION : presentation,
+  );
   const sendPresentation = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
@@ -203,6 +218,43 @@ export default function useCameraMode() {
       });
     return senderQueueRef.current;
   }, []);
+
+  const restorePreview = useCallback(() => {
+    const pipPreview = pipPreviewRef.current;
+    if (!pipPreview) return;
+    pipPreviewRef.current = null;
+    pipPreview.dispose();
+    setPipPreviewActive(false);
+  }, []);
+
+  const closePip = useCallback(() => {
+    ++pipRequestRef.current;
+    pipPreparingRef.current = false;
+    setPipPreparing(false);
+    const video = videoRef.current as SafariVideo | null;
+    if (video && document.pictureInPictureElement === video) {
+      void document.exitPictureInPicture().catch(() => {});
+    } else if (video?.webkitPresentationMode === "picture-in-picture") {
+      video.webkitSetPresentationMode?.("inline");
+    }
+    restorePreview();
+    setPipActive(false);
+  }, [restorePreview]);
+
+  useEffect(() => {
+    previewVisibleRef.current = showPreview;
+    const video = videoRef.current;
+    if (!video || source === "idle") return;
+    if (showPreview || pipActive || pipPreparing)
+      void video.play().catch(() => {});
+    else video.pause();
+  }, [showPreview, source, pipActive, pipPreparing]);
+
+  useEffect(() => {
+    if (!pipActive && !pipPreparing) restorePreview();
+  }, [pipActive, pipPreparing, restorePreview]);
+
+  useEffect(() => closePip, [closePip]);
 
   const currentWidth = Math.round(
     (selectedResolution.height * selectedRatio.widthRatio) /
@@ -492,8 +544,10 @@ export default function useCameraMode() {
         }
       }
 
+      if (previousStream) closePip();
       streamKindRef.current = kind;
       presentationRef.current = DEFAULT_VIDEO_PRESENTATION;
+      setPresentation(DEFAULT_VIDEO_PRESENTATION);
       sendPresentation();
       streamRef.current = stream;
       rtcTrackRef.current = clonedTrack;
@@ -502,10 +556,12 @@ export default function useCameraMode() {
       });
       previousTrack?.stop();
       setTrackMuted(track.muted);
+      setPreviewReady(true);
       track.onmute = () => setTrackMuted(true);
       track.onunmute = () => setTrackMuted(false);
       track.onended = () => {
         if (streamRef.current !== stream) return;
+        closePip();
         rtcTrackRef.current?.stop();
         stream.getTracks().forEach((t) => {
           t.stop();
@@ -522,8 +578,10 @@ export default function useCameraMode() {
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        // Preview playback failure must not prevent transmission.
-        void videoRef.current.play().catch(() => {});
+        // Preview playback and RTP transmission have independent lifecycles.
+        if (previewVisibleRef.current)
+          void videoRef.current.play().catch(() => {});
+        else videoRef.current.pause();
       }
       if (pcRef.current && (!sender || sender.track !== clonedTrack)) {
         await createPeerConnectionAndSendOffer();
@@ -537,38 +595,35 @@ export default function useCameraMode() {
       configureSender,
       refreshCaptureSettings,
       sendPresentation,
+      closePip,
     ],
   );
 
-  const showScreenPreview = useCallback(
-    async (
-      output: MediaStream,
-      original: MediaStream,
-      presentation: VideoPresentation,
-    ) => {
+  const updateScreenPresentation = useCallback(
+    (next: VideoPresentation, original: MediaStream) => {
       if (streamRef.current !== original || streamKindRef.current !== "screen")
         return;
-      // Rotate only the local preview. Sending the native track avoids a Canvas
-      // drawing loop becoming a dependency of background WebRTC transmission.
-      if (videoRef.current && videoRef.current.srcObject !== output) {
-        videoRef.current.srcObject = output;
-        void videoRef.current.play().catch(() => {});
-      }
-      presentationRef.current = presentation;
+      const previous = presentationRef.current;
+      if (
+        previous.rotation === next.rotation &&
+        previous.auto === next.auto &&
+        previous.portrait === next.portrait
+      )
+        return;
+      presentationRef.current = next;
+      setPresentation(next);
       sendPresentation();
-      refreshCaptureSettings();
     },
-    [refreshCaptureSettings, sendPresentation],
+    [sendPresentation],
   );
 
   useScreenOrientation({
     enabled: source === "screen",
     streamRef,
-    shortEdge: screenResolution.height,
-    frameRate: screenFps,
+    videoRef,
+    captureSettings,
     rotationOverride: screenRotation,
-    onOutput: showScreenPreview,
-    onError: setCaptureError,
+    onPresentation: updateScreenPresentation,
   });
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: cameraRequest intentionally restarts capture when retrying the same camera.
@@ -687,9 +742,9 @@ export default function useCameraMode() {
       );
     };
     const onReady = () => {
-      setPreviewReady(true);
       updatePip();
     };
+    updatePip();
     video.addEventListener("loadedmetadata", onReady);
     video.addEventListener("enterpictureinpicture", updatePip);
     video.addEventListener("leavepictureinpicture", updatePip);
@@ -704,27 +759,85 @@ export default function useCameraMode() {
 
   const togglePip = async () => {
     const video = videoRef.current as SafariVideo | null;
-    if (!video) return;
+    const original = streamRef.current;
+    if (!video || !original || pipPreparingRef.current) return;
+    if (
+      document.pictureInPictureElement === video ||
+      video.webkitPresentationMode === "picture-in-picture"
+    ) {
+      closePip();
+      return;
+    }
+    const request = ++pipRequestRef.current;
+    pipPreparingRef.current = true;
+    setPipPreparing(true);
     setCaptureError("");
     try {
-      if (document.pictureInPictureElement === video) {
-        await document.exitPictureInPicture();
-      } else if (
-        document.pictureInPictureEnabled &&
-        video.requestPictureInPicture
-      ) {
+      if (streamKindRef.current === "screen") {
+        const pipPreview = createPipPreview({
+          video,
+          stream: original,
+          getPresentation: () => presentationRef.current,
+          getQuality: () => qualityRef.current,
+          canRestore: () => streamRef.current === original,
+          isPreviewVisible: () => previewVisibleRef.current,
+        });
+        pipPreviewRef.current = pipPreview;
+        await pipPreview.ready;
+        if (request !== pipRequestRef.current) return;
+        setPipPreviewActive(true);
+      } else {
+        await video.play();
+      }
+      if (request !== pipRequestRef.current || streamRef.current !== original)
+        return;
+      if (document.pictureInPictureEnabled && video.requestPictureInPicture) {
         await video.requestPictureInPicture();
       } else if (video.webkitSupportsPresentationMode?.("picture-in-picture")) {
-        video.webkitSetPresentationMode?.(
-          video.webkitPresentationMode === "picture-in-picture"
-            ? "inline"
-            : "picture-in-picture",
+        video.webkitSetPresentationMode?.("picture-in-picture");
+        if (video.webkitPresentationMode !== "picture-in-picture") {
+          await new Promise<void>((resolve, reject) => {
+            const check = () => {
+              if (video.webkitPresentationMode === "picture-in-picture") {
+                clearTimeout(timeout);
+                video.removeEventListener(
+                  "webkitpresentationmodechanged",
+                  check,
+                );
+                resolve();
+              }
+            };
+            const timeout = window.setTimeout(() => {
+              video.removeEventListener("webkitpresentationmodechanged", check);
+              reject(new Error("PiP did not start"));
+            }, 1500);
+            video.addEventListener("webkitpresentationmodechanged", check);
+          });
+        }
+      } else {
+        throw new Error("PiP is unavailable for this stream");
+      }
+      if (request === pipRequestRef.current) setPipActive(true);
+    } catch (error) {
+      if (
+        request === pipRequestRef.current &&
+        !(error instanceof DOMException && error.name === "AbortError")
+      ) {
+        setCaptureError(
+          `PiP: ${error instanceof Error ? error.message : "Failed"}`,
         );
       }
-    } catch (error) {
-      setCaptureError(
-        `PiP: ${error instanceof Error ? error.message : "Failed"}`,
-      );
+      if (request === pipRequestRef.current) restorePreview();
+    } finally {
+      if (request === pipRequestRef.current) {
+        pipPreparingRef.current = false;
+        setPipPreparing(false);
+        if (
+          document.pictureInPictureElement !== video &&
+          video.webkitPresentationMode !== "picture-in-picture"
+        )
+          restorePreview();
+      }
     }
   };
 
@@ -771,7 +884,7 @@ export default function useCameraMode() {
       isSwitching,
       screenSupported,
       pipSupported,
-      previewReady,
+      previewReady: previewReady && !pipPreparing,
       pipActive,
       showLeftUI,
       showPreview,
@@ -787,6 +900,7 @@ export default function useCameraMode() {
       onToggleMute: toggleVideoMute,
     },
     videoRef,
+    previewStyle,
     captureError,
   };
 }

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { getEffectiveRotation } from "../util/videoPresentation";
+
 import type { CSSProperties, RefObject } from "react";
 import type { VideoPresentation } from "../util/videoPresentation";
 
@@ -45,15 +47,11 @@ export default function useVideoPresentation(
     };
   }, [videoRef]);
 
-  let rotation = presentation.rotation;
-  if (
-    presentation.auto &&
-    rotation % 180 !== 0 &&
-    size.videoWidth &&
-    size.videoHeight &&
-    size.videoWidth < size.videoHeight === presentation.portrait
-  )
-    rotation = 0;
+  const rotation = getEffectiveRotation(
+    presentation,
+    size.videoWidth,
+    size.videoHeight,
+  );
   if (!rotation || !size.width || !size.height) return {};
   const swap = rotation % 180 !== 0;
   return {

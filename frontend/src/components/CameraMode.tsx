@@ -4,7 +4,8 @@ import CameraSettings from "./camera/CameraSettings";
 import CameraStats from "./camera/CameraStats";
 
 export default function CameraMode() {
-  const { stats, settings, controls, videoRef, captureError } = useCameraMode();
+  const { stats, settings, controls, videoRef, previewStyle, captureError } =
+    useCameraMode();
 
   return (
     <div className="app-container">
@@ -29,7 +30,12 @@ export default function CameraMode() {
         muted
         playsInline
         className="video-stream"
-        style={{ opacity: controls.showPreview ? 1 : 0 }}
+        style={{
+          ...previewStyle,
+          display:
+            controls.showPreview || controls.pipActive ? "block" : "none",
+          opacity: controls.showPreview ? 1 : 0,
+        }}
       />
     </div>
   );

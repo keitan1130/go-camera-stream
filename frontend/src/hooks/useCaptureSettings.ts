@@ -16,7 +16,12 @@ export default function useCaptureSettings(
         : streamRef.current;
     const track = output?.getVideoTracks()[0];
     const settings = track?.readyState === "live" ? track.getSettings() : null;
-    if (settings && video?.readyState && video.srcObject === output) {
+    if (
+      settings &&
+      video?.readyState &&
+      !video.paused &&
+      video.srcObject === output
+    ) {
       // Intrinsic video dimensions follow rotation, unlike the requested camera size.
       settings.width = video.videoWidth || settings.width;
       settings.height = video.videoHeight || settings.height;

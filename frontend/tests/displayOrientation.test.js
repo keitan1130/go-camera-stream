@@ -4,6 +4,7 @@ import {
   normalizeDisplayOrientation,
   resolveScreenCorrection,
 } from "../src/util/displayOrientation.ts";
+import { getEffectiveRotation } from "../src/util/videoPresentation.ts";
 
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -89,5 +90,16 @@ test("left/right and upside-down turns keep the capture baseline", () => {
   assert.equal(
     resolveScreenCorrection(720, 1280, { angle: 0, portrait: true }, basis),
     0,
+  );
+});
+
+test("CSS and PiP share the same native-rotation and manual-rotation policy", () => {
+  const auto = { rotation: 270, auto: true, portrait: false };
+  assert.equal(getEffectiveRotation(auto, 720, 1280), 270);
+  assert.equal(getEffectiveRotation(auto, 1280, 720), 0);
+  assert.equal(getEffectiveRotation({ ...auto, auto: false }, 1280, 720), 270);
+  assert.equal(
+    getEffectiveRotation({ ...auto, rotation: 180 }, 1280, 720),
+    180,
   );
 });
