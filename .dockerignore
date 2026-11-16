@@ -15,7 +15,7 @@ server
 *.exe
 
 # フロントエンドのローカル依存関係とビルドファイル
-# ※Dockerコンテナの中で npm install と npm run build を行うため、
+# ※Dockerコンテナの中で npm ci と npm run build を行うため、
 # 手元のPCにあるこれらはコンテナ内に送る必要がありません。
 frontend/node_modules/
 frontend/dist/

@@ -1,13 +1,13 @@
-import { useState } from 'react';
+import { useState } from "react";
 
 export default function SetupMode() {
   const urlParams = new URLSearchParams(window.location.search);
 
-  const initialId = urlParams.get('id') || '1';
+  const initialId = urlParams.get("id") || "1";
 
   const [inputId, setInputId] = useState(initialId);
 
-  const handleModeSelect = (selectedMode: 'camera' | 'viewer') => {
+  const handleModeSelect = (selectedMode: "camera" | "viewer") => {
     window.location.href = `/?id=${inputId}&mode=${selectedMode}`;
   };
 
@@ -25,10 +25,18 @@ export default function SetupMode() {
       </div>
 
       <div className="button-group">
-        <button onClick={() => handleModeSelect('camera')} className="mode-button">
+        <button
+          type="button"
+          onClick={() => handleModeSelect("camera")}
+          className="mode-button"
+        >
           Camera Mode
         </button>
-        <button onClick={() => handleModeSelect('viewer')} className="mode-button">
+        <button
+          type="button"
+          onClick={() => handleModeSelect("viewer")}
+          className="mode-button"
+        >
           Viewer Mode
         </button>
       </div>

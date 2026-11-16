@@ -1,7 +1,7 @@
-import type { Dispatch, SetStateAction } from 'react';
-import type { RESOLUTIONS, ASPECT_RATIOS, WebRTCStats } from '../../constants';
+import type { Dispatch, SetStateAction } from "react";
+import type { ASPECT_RATIOS, RESOLUTIONS, WebRTCStats } from "../../constants";
 
-type CaptureSource = 'camera' | 'screen' | 'idle';
+type CaptureSource = "camera" | "screen" | "idle";
 type Resolution = (typeof RESOLUTIONS)[number];
 type AspectRatio = (typeof ASPECT_RATIOS)[number];
 type Setter<T> = Dispatch<SetStateAction<T>>;

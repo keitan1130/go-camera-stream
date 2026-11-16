@@ -1,16 +1,16 @@
-import './App.css';
-import CameraMode from './components/CameraMode.tsx';
-import ViewerMode from './components/ViewerMode.tsx';
-import SetupMode from './components/SetupMode.tsx';
+import "./App.css";
+import CameraMode from "./components/CameraMode.tsx";
+import SetupMode from "./components/SetupMode.tsx";
+import ViewerMode from "./components/ViewerMode.tsx";
 
 export default function App() {
-  const mode = new URLSearchParams(window.location.search).get('mode');
+  const mode = new URLSearchParams(window.location.search).get("mode");
 
-  if (mode === 'viewer') {
+  if (mode === "viewer") {
     return <ViewerMode />;
   }
 
-  if (mode === 'camera') {
+  if (mode === "camera") {
     return <CameraMode />;
   }
 

@@ -1,7 +1,7 @@
-import CameraControls from './camera/CameraControls';
-import CameraSettings from './camera/CameraSettings';
-import CameraStats from './camera/CameraStats';
-import useCameraMode from '../hooks/useCameraMode';
+import useCameraMode from "../hooks/useCameraMode";
+import CameraControls from "./camera/CameraControls";
+import CameraSettings from "./camera/CameraSettings";
+import CameraStats from "./camera/CameraStats";
 
 export default function CameraMode() {
   const { stats, settings, controls, videoRef, captureError } = useCameraMode();
@@ -17,7 +17,11 @@ export default function CameraMode() {
 
       <CameraControls {...controls} />
 
-      {captureError && <div className="capture-error" role="alert">{captureError}</div>}
+      {captureError && (
+        <div className="capture-error" role="alert">
+          {captureError}
+        </div>
+      )}
 
       <video
         ref={videoRef}

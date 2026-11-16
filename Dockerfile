@@ -1,13 +1,14 @@
 # Stage 1: フロントエンドのビルド
-FROM node:20-alpine AS frontend-builder
+FROM node:26-alpine AS frontend-builder
 WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install
+COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
+RUN npm install --global npm@12.2.2
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: バックエンドのビルド
-FROM golang:alpine AS backend-builder
+FROM golang:1.27.4-alpine AS backend-builder
 WORKDIR /app
 COPY go.mod go.sum* ./
 RUN go mod download

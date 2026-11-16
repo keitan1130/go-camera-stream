@@ -95,18 +95,30 @@ docker compose logs -f
 
 ## 開発環境（ローカル開発での起動）
 
-コードを直接編集しながら開発を行う場合の手順です。Go (1.20以上) と Node.js (v20推奨) が必要です。
+コードを直接編集しながら開発を行う場合の手順です。Go 1.27.4以上、Node.js 26、npm 12が必要です。
 
 ### 1. フロントエンド（React）のビルド
 
 ```bash
 cd frontend
-npm install
+nvm use
+npm install --global npm@12.2.2
+npm ci
 npm run build
 cd ..
 ```
 
 *※Goサーバーは `frontend/dist` ディレクトリの中身を静的ファイルとして配信するため、フロントエンドを変更した際は必ずビルドが必要です。*
+
+フロントエンドのLint・整形にはBiomeを使用します。
+
+```bash
+cd frontend
+npm run lint       # ソースのLint
+npm run check      # Lint・整形・import順序を確認
+npm run format     # 自動修正と整形
+npm run ci         # check + build
+```
 
 ### 2. バックエンド（Go）の起動
 
@@ -131,6 +143,8 @@ go run *.go
 | `TLS_KEY_FILE` | (なし) | 正規のSSL証明書を使用する場合の秘密鍵ファイルのパス。 |
 
 ---
+
+開発作業のルールは [`AGENTS.md`](./AGENTS.md) を参照してください。
 
 ## プロジェクト構成
 
