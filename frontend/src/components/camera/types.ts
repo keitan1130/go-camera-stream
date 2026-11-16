@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { ASPECT_RATIOS, RESOLUTIONS, WebRTCStats } from "../../constants";
+import type { ScreenRotation } from "../../util/videoPresentation";
 
 type CaptureSource = "camera" | "screen" | "idle";
 type Resolution = (typeof RESOLUTIONS)[number];
@@ -27,6 +28,8 @@ export interface CameraSettingsProps {
   setSelectedResolution: Setter<Resolution>;
   selectedRatio: AspectRatio;
   setSelectedRatio: Setter<AspectRatio>;
+  screenRotation: ScreenRotation;
+  setScreenRotation: Setter<ScreenRotation>;
   selectedFps: number;
   setSelectedFps: Setter<number>;
   selectedDegradation: string;

@@ -5,21 +5,45 @@ export function isIOSDevice() {
   );
 }
 
-export function getDisplayOrientation() {
-  const legacyAngle = (window as Window & { orientation?: number }).orientation;
-  const angle =
-    screen.orientation?.angle ??
-    legacyAngle ??
-    (screen.width > screen.height ? 90 : 0);
-  const type = screen.orientation?.type;
+export function normalizeDisplayOrientation(
+  type: OrientationType | undefined,
+  angle: number | undefined,
+  legacyAngle: number | undefined,
+  width: number,
+  height: number,
+) {
+  const portrait = type
+    ? type.startsWith("portrait")
+    : legacyAngle !== undefined
+      ? Math.abs(legacyAngle) % 180 === 0
+      : width <= height;
+  const canonical =
+    type === "portrait-secondary"
+      ? 180
+      : type === "landscape-secondary"
+        ? 270
+        : portrait
+          ? 0
+          : 90;
+  // iPad can use landscape as its natural (zero-degree) orientation. Normalize
+  // to a portrait reference, preferring Apple's legacy angle when consistent.
+  const candidate = legacyAngle ?? angle;
+  const normalized =
+    candidate === undefined ? canonical : ((candidate % 360) + 360) % 360;
   return {
-    angle: ((angle % 360) + 360) % 360,
-    portrait: type
-      ? type.startsWith("portrait")
-      : legacyAngle !== undefined
-        ? Math.abs(legacyAngle) % 180 === 0
-        : screen.width <= screen.height,
+    portrait,
+    angle: (normalized % 180 === 0) === portrait ? normalized : canonical,
   };
+}
+
+export function getDisplayOrientation() {
+  return normalizeDisplayOrientation(
+    screen.orientation?.type,
+    screen.orientation?.angle,
+    (window as Window & { orientation?: number }).orientation,
+    screen.width,
+    screen.height,
+  );
 }
 
 export function getScreenCorrection(
@@ -28,13 +52,28 @@ export function getScreenCorrection(
   orientation: { angle: number; portrait: boolean },
   nativeAngle: number,
 ) {
-  if (
-    !width ||
-    !height ||
-    width === height ||
-    width < height === orientation.portrait
-  )
-    return 0;
+  if (!width || !height || width === height) return 0;
   const delta = (((nativeAngle - orientation.angle) % 360) + 360) % 360;
-  return delta === 90 || delta === 270 ? delta : 0;
+  return delta as 0 | 90 | 180 | 270;
+}
+
+export interface ScreenOrientationBasis {
+  angle?: number;
+  portrait?: boolean;
+}
+
+export function resolveScreenCorrection(
+  width: number,
+  height: number,
+  orientation: { angle: number; portrait: boolean },
+  basis: ScreenOrientationBasis,
+) {
+  const portrait = width < height;
+  const matches = portrait === orientation.portrait;
+  if (basis.angle === undefined)
+    basis.angle = matches ? orientation.angle : portrait ? 0 : 90;
+  else if (basis.portrait !== portrait && matches)
+    basis.angle = orientation.angle;
+  basis.portrait = portrait;
+  return getScreenCorrection(width, height, orientation, basis.angle);
 }

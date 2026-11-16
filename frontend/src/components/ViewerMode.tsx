@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 
 import { rtcConfig, type WebRTCStats } from "../constants";
+import useVideoPresentation from "../hooks/useVideoPresentation";
+import {
+  DEFAULT_VIDEO_PRESENTATION,
+  isVideoPresentation,
+} from "../util/videoPresentation";
 
 export default function ViewerMode() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
 
   const [connectionState, setConnectionState] = useState("new");
+  const [presentation, setPresentation] = useState(DEFAULT_VIDEO_PRESENTATION);
+  const videoStyle = useVideoPresentation(videoRef, presentation);
   const streamId =
     new URLSearchParams(window.location.search).get("id") || "default";
 
@@ -122,7 +129,12 @@ export default function ViewerMode() {
         ws.send(JSON.stringify({ role: "viewer", type: "join" }));
       }
 
-      if (msg.type === "offer") {
+      if (
+        msg.type === "presentation" &&
+        isVideoPresentation(msg.presentation)
+      ) {
+        setPresentation(msg.presentation);
+      } else if (msg.type === "offer") {
         const pc = createPeerConnection();
         await pc.setRemoteDescription(msg.sdp);
         const answer = await pc.createAnswer();
@@ -157,6 +169,7 @@ export default function ViewerMode() {
         muted
         playsInline
         className="video-stream"
+        style={videoStyle}
       />
     </div>
   );

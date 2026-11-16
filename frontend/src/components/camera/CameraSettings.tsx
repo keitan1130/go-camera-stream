@@ -1,5 +1,6 @@
 import { ASPECT_RATIOS, FPS_OPTIONS, RESOLUTIONS } from "../../constants";
 
+import type { ScreenRotation } from "../../util/videoPresentation";
 import type { CameraSettingsProps } from "./types";
 
 export default function CameraSettings({
@@ -12,6 +13,8 @@ export default function CameraSettings({
   setSelectedResolution,
   selectedRatio,
   setSelectedRatio,
+  screenRotation,
+  setScreenRotation,
   selectedFps,
   setSelectedFps,
   selectedDegradation,
@@ -22,6 +25,7 @@ export default function CameraSettings({
       <div className="interactive-item">
         <span>&gt; Camera: </span>
         <select
+          aria-label="Camera"
           disabled={source === "screen" || isSwitching}
           value={selectedDeviceId}
           onChange={(e) => setSelectedDeviceId(e.target.value)}
@@ -38,6 +42,7 @@ export default function CameraSettings({
       <div className="interactive-item">
         <span>&gt; Resolution: </span>
         <select
+          aria-label="Resolution"
           disabled={isSwitching}
           value={selectedResolution.label}
           onChange={(e) => {
@@ -56,6 +61,7 @@ export default function CameraSettings({
       <div className="interactive-item">
         <span>&gt; AspectRatio: </span>
         <select
+          aria-label="Aspect ratio"
           disabled={source === "screen" || isSwitching}
           value={source === "screen" ? "auto" : selectedRatio.label}
           onChange={(e) => {
@@ -72,9 +78,34 @@ export default function CameraSettings({
         </select>
       </div>
 
+      {source === "screen" && (
+        <div className="interactive-item">
+          <span>&gt; Rotation: </span>
+          <select
+            aria-label="Rotation"
+            value={String(screenRotation)}
+            onChange={(event) =>
+              setScreenRotation(
+                event.target.value === "auto"
+                  ? "auto"
+                  : (Number(event.target.value) as ScreenRotation),
+              )
+            }
+          >
+            <option value="auto">Auto</option>
+            {[0, 90, 180, 270].map((angle) => (
+              <option key={angle} value={angle}>
+                {angle}°
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div className="interactive-item">
         <span>&gt; FPS: </span>
         <select
+          aria-label="FPS"
           disabled={isSwitching}
           value={selectedFps}
           onChange={(e) => setSelectedFps(Number(e.target.value))}
@@ -90,6 +121,7 @@ export default function CameraSettings({
       <div className="interactive-item">
         <span>&gt; Degradation: </span>
         <select
+          aria-label="Degradation"
           value={selectedDegradation}
           onChange={(e) => setSelectedDegradation(e.target.value)}
         >

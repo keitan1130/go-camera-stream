@@ -1,20 +1,29 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import {
   getDisplayOrientation,
-  getScreenCorrection,
   isIOSDevice,
+  resolveScreenCorrection,
 } from "../util/displayOrientation";
 import { getScreenEncoding } from "../util/screenQuality";
 
 import type { RefObject } from "react";
+import type {
+  ScreenRotation,
+  VideoPresentation,
+} from "../util/videoPresentation";
 
 interface UseScreenOrientationParams {
   enabled: boolean;
   streamRef: RefObject<MediaStream | null>;
   shortEdge: number;
   frameRate: number;
-  onOutput: (output: MediaStream, original: MediaStream) => Promise<void>;
+  rotationOverride: ScreenRotation;
+  onOutput: (
+    output: MediaStream,
+    original: MediaStream,
+    presentation: VideoPresentation,
+  ) => Promise<void>;
   onError: (message: string) => void;
 }
 
@@ -23,11 +32,17 @@ export default function useScreenOrientation({
   streamRef,
   shortEdge,
   frameRate,
+  rotationOverride,
   onOutput,
   onError,
 }: UseScreenOrientationParams) {
+  const basisRef = useRef<{
+    stream: MediaStream | null;
+    angle?: number;
+    portrait?: boolean;
+  }>({ stream: null });
   useEffect(() => {
-    if (!enabled || !isIOSDevice()) return;
+    if (!enabled || (!isIOSDevice() && rotationOverride === "auto")) return;
     const original = streamRef.current;
     if (!original) return;
     // Keep the unmodified source separately: the visible preview can become the
@@ -53,7 +68,9 @@ export default function useScreenOrientation({
     }
     let stopped = false;
     let rotation = 0;
-    let nativeAngle: number | undefined;
+    if (basisRef.current.stream !== original)
+      basisRef.current = { stream: original };
+    let previousPresentation = "";
     let output: MediaStream | null = null;
     let timer = 0;
     let frameCallback = 0;
@@ -74,18 +91,15 @@ export default function useScreenOrientation({
       if (stopped || !rotation) return;
       if (now - lastFrame >= 1000 / frameRate - 1 && input.readyState >= 2) {
         lastFrame = now;
-        const scale = getScreenEncoding(input.videoHeight, input.videoWidth, {
+        const swap = rotation % 180 !== 0;
+        const outputWidth = swap ? input.videoHeight : input.videoWidth;
+        const outputHeight = swap ? input.videoWidth : input.videoHeight;
+        const scale = getScreenEncoding(outputWidth, outputHeight, {
           shortEdge,
           frameRate,
         }).scaleResolutionDownBy;
-        const width = Math.max(
-          2,
-          Math.floor(input.videoHeight / scale / 2) * 2,
-        );
-        const height = Math.max(
-          2,
-          Math.floor(input.videoWidth / scale / 2) * 2,
-        );
+        const width = Math.max(2, Math.floor(outputWidth / scale / 2) * 2);
+        const height = Math.max(2, Math.floor(outputHeight / scale / 2) * 2);
         if (canvas.width !== width || canvas.height !== height) {
           canvas.width = width;
           canvas.height = height;
@@ -93,7 +107,15 @@ export default function useScreenOrientation({
         context.setTransform(1, 0, 0, 1, 0, 0);
         context.translate(width / 2, height / 2);
         context.rotate((rotation * Math.PI) / 180);
-        context.drawImage(input, -height / 2, -width / 2, height, width);
+        const inputWidth = swap ? height : width;
+        const inputHeight = swap ? width : height;
+        context.drawImage(
+          input,
+          -inputWidth / 2,
+          -inputHeight / 2,
+          inputWidth,
+          inputHeight,
+        );
       }
     };
     const scheduleFrame = () => {
@@ -113,24 +135,35 @@ export default function useScreenOrientation({
     const update = () => {
       if (stopped || !input.videoWidth || !input.videoHeight) return;
       const orientation = getDisplayOrientation();
-      const matches =
-        input.videoWidth < input.videoHeight === orientation.portrait;
-      // Record the source's unrotated orientation only when its dimensions agree
-      // with the device. If capture begins sideways, infer its natural axis.
-      if (matches) nativeAngle = orientation.angle;
-      else if (nativeAngle === undefined)
-        nativeAngle = input.videoWidth < input.videoHeight ? 0 : 90;
-      const next = getScreenCorrection(
-        input.videoWidth,
-        input.videoHeight,
-        orientation,
-        nativeAngle ?? 0,
-      );
-      if (next === rotation) return;
+      const next =
+        rotationOverride === "auto"
+          ? resolveScreenCorrection(
+              input.videoWidth,
+              input.videoHeight,
+              orientation,
+              basisRef.current,
+            )
+          : rotationOverride;
+      const presentation: VideoPresentation = {
+        rotation: next,
+        auto: rotationOverride === "auto",
+        portrait: orientation.portrait,
+      };
+      const serialized = JSON.stringify(presentation);
+      if (next === rotation) {
+        if (serialized !== previousPresentation) {
+          previousPresentation = serialized;
+          void onOutput(output ?? original, original, presentation).catch(
+            report,
+          );
+        }
+        return;
+      }
+      previousPresentation = serialized;
       rotation = next;
       cancelFrame();
       if (!rotation) {
-        void onOutput(original, original).catch(report);
+        void onOutput(original, original, presentation).catch(report);
         output?.getTracks().forEach((track) => {
           track.stop();
         });
@@ -141,8 +174,8 @@ export default function useScreenOrientation({
       draw(performance.now());
       if (!output) {
         output = canvas.captureStream(frameRate);
-        void onOutput(output, original).catch(report);
       }
+      void onOutput(output, original, presentation).catch(report);
       scheduleFrame();
     };
     const onOrientation = () => {
@@ -169,7 +202,11 @@ export default function useScreenOrientation({
       window.removeEventListener("orientationchange", onOrientation);
       document.removeEventListener("visibilitychange", onVisibility);
       if (output) {
-        void onOutput(original, original);
+        void onOutput(original, original, {
+          rotation: 0,
+          auto: false,
+          portrait: false,
+        });
         output.getTracks().forEach((track) => {
           track.stop();
         });
@@ -177,5 +214,13 @@ export default function useScreenOrientation({
       input.srcObject = null;
       input.remove();
     };
-  }, [enabled, streamRef, shortEdge, frameRate, onOutput, onError]);
+  }, [
+    enabled,
+    streamRef,
+    shortEdge,
+    frameRate,
+    rotationOverride,
+    onOutput,
+    onError,
+  ]);
 }

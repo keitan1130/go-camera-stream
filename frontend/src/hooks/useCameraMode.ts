@@ -14,8 +14,14 @@ import {
   getScreenBounds,
   getScreenEncoding,
 } from "../util/screenQuality";
+import { DEFAULT_VIDEO_PRESENTATION } from "../util/videoPresentation";
 import useCaptureSettings from "./useCaptureSettings";
 import useScreenOrientation from "./useScreenOrientation";
+
+import type {
+  ScreenRotation,
+  VideoPresentation,
+} from "../util/videoPresentation";
 
 type SafariVideo = HTMLVideoElement & {
   webkitSupportsPresentationMode?: (mode: string) => boolean;
@@ -108,6 +114,25 @@ export default function useCameraMode() {
     return FPS_OPTIONS.includes(saved) ? saved : DEFAULT_FPS;
   });
 
+  const [screenRotation, setScreenRotation] = useState<ScreenRotation>(() => {
+    const saved = getSavedState<ScreenRotation>("screen_rotation", "auto");
+    return saved === "auto" || [0, 90, 180, 270].includes(saved)
+      ? saved
+      : "auto";
+  });
+  const presentationRef = useRef<VideoPresentation>(DEFAULT_VIDEO_PRESENTATION);
+  const sendPresentation = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          role: "camera",
+          type: "presentation",
+          presentation: presentationRef.current,
+        }),
+      );
+    }
+  }, []);
+
   const [selectedDegradation, setSelectedDegradation] = useState<string>(() =>
     getSavedState("camera_degradation", "maintain-resolution"),
   );
@@ -183,6 +208,10 @@ export default function useCameraMode() {
     (selectedResolution.height * selectedRatio.widthRatio) /
       selectedRatio.heightRatio,
   );
+
+  useEffect(() => {
+    localStorage.setItem("screen_rotation", JSON.stringify(screenRotation));
+  }, [screenRotation]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -387,6 +416,7 @@ export default function useCameraMode() {
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ role: "camera", type: "join" }));
+      sendPresentation();
       createPeerConnectionAndSendOffer();
     };
 
@@ -395,6 +425,7 @@ export default function useCameraMode() {
       if (msg.role === "camera") return;
 
       if (msg.type === "join" && msg.role === "viewer") {
+        sendPresentation();
         createPeerConnectionAndSendOffer();
       } else if (msg.type === "answer" && pcRef.current) {
         await pcRef.current.setRemoteDescription(msg.sdp);
@@ -409,7 +440,7 @@ export default function useCameraMode() {
       ws.close();
       pcRef.current?.close();
     };
-  }, [streamId, createPeerConnectionAndSendOffer]);
+  }, [streamId, createPeerConnectionAndSendOffer, sendPresentation]);
 
   const installStream = useCallback(
     async (stream: MediaStream, request: number, kind: "camera" | "screen") => {
@@ -462,6 +493,8 @@ export default function useCameraMode() {
       }
 
       streamKindRef.current = kind;
+      presentationRef.current = DEFAULT_VIDEO_PRESENTATION;
+      sendPresentation();
       streamRef.current = stream;
       rtcTrackRef.current = clonedTrack;
       previousStream?.getTracks().forEach((t) => {
@@ -499,75 +532,33 @@ export default function useCameraMode() {
       }
       return true;
     },
-    [createPeerConnectionAndSendOffer, configureSender, refreshCaptureSettings],
+    [
+      createPeerConnectionAndSendOffer,
+      configureSender,
+      refreshCaptureSettings,
+      sendPresentation,
+    ],
   );
 
-  const outputQueueRef = useRef(Promise.resolve());
-  const outputRequestRef = useRef(0);
-  const replaceScreenOutput = useCallback(
-    (output: MediaStream, original: MediaStream) => {
-      const request = ++outputRequestRef.current;
-      const update = async () => {
-        if (
-          request !== outputRequestRef.current ||
-          streamRef.current !== original ||
-          streamKindRef.current !== "screen"
-        )
-          return;
-        const track = output.getVideoTracks()[0];
-        if (track?.readyState !== "live") return;
-        const nextTrack = track.clone();
-        nextTrack.contentHint = "detail";
-        nextTrack.enabled = !isVideoMutedRef.current;
-        const sender = pcRef.current
-          ?.getSenders()
-          .find((s) => s.track?.kind === "video" || s.track === null);
-        let renegotiate = false;
-        try {
-          if (sender) await sender.replaceTrack(nextTrack);
-        } catch (error) {
-          if (
-            error instanceof DOMException &&
-            error.name === "InvalidModificationError"
-          ) {
-            renegotiate = true;
-          } else {
-            nextTrack.stop();
-            throw error;
-          }
-        }
-        if (
-          request !== outputRequestRef.current ||
-          streamRef.current !== original
-        ) {
-          if (sender && sender.track === nextTrack)
-            await sender.replaceTrack(rtcTrackRef.current);
-          nextTrack.stop();
-          return;
-        }
-        const previous = rtcTrackRef.current;
-        rtcTrackRef.current = nextTrack;
-        previous?.stop();
-        if (videoRef.current) {
-          videoRef.current.srcObject = output;
-          void videoRef.current.play().catch(() => {});
-        }
-        if (sender && !renegotiate) await configureSender(sender);
-        else if (pcRef.current) await createPeerConnectionAndSendOffer();
-        refreshCaptureSettings();
-      };
-      outputQueueRef.current = outputQueueRef.current
-        .then(update)
-        .catch((error) => {
-          if (streamRef.current === original) {
-            setCaptureError(
-              `Screen: ${error instanceof Error ? error.message : "Rotation failed"}`,
-            );
-          }
-        });
-      return outputQueueRef.current;
+  const showScreenPreview = useCallback(
+    async (
+      output: MediaStream,
+      original: MediaStream,
+      presentation: VideoPresentation,
+    ) => {
+      if (streamRef.current !== original || streamKindRef.current !== "screen")
+        return;
+      // Rotate only the local preview. Sending the native track avoids a Canvas
+      // drawing loop becoming a dependency of background WebRTC transmission.
+      if (videoRef.current && videoRef.current.srcObject !== output) {
+        videoRef.current.srcObject = output;
+        void videoRef.current.play().catch(() => {});
+      }
+      presentationRef.current = presentation;
+      sendPresentation();
+      refreshCaptureSettings();
     },
-    [configureSender, createPeerConnectionAndSendOffer, refreshCaptureSettings],
+    [refreshCaptureSettings, sendPresentation],
   );
 
   useScreenOrientation({
@@ -575,7 +566,8 @@ export default function useCameraMode() {
     streamRef,
     shortEdge: screenResolution.height,
     frameRate: screenFps,
-    onOutput: replaceScreenOutput,
+    rotationOverride: screenRotation,
+    onOutput: showScreenPreview,
     onError: setCaptureError,
   });
 
@@ -767,6 +759,8 @@ export default function useCameraMode() {
         source === "screen" ? setScreenResolution : setSelectedResolution,
       selectedRatio,
       setSelectedRatio,
+      screenRotation,
+      setScreenRotation,
       selectedFps: source === "screen" ? screenFps : selectedFps,
       setSelectedFps: source === "screen" ? setScreenFps : setSelectedFps,
       selectedDegradation,
