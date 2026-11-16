@@ -3,14 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { createPipPreview } from "../util/pipPreview";
 
 import type { RefObject } from "react";
+import type { SafariVideo } from "../util/pipSupport";
 import type { ScreenQuality } from "../util/screenQuality";
 import type { VideoPresentation } from "../util/videoPresentation";
-
-export type SafariVideo = HTMLVideoElement & {
-  webkitSupportsPresentationMode?: (mode: string) => boolean;
-  webkitSetPresentationMode?: (mode: string) => void;
-  webkitPresentationMode?: string;
-};
 
 interface PipStandbyOptions {
   enabled: boolean;

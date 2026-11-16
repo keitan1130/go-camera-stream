@@ -11,6 +11,7 @@ import {
 } from "../constants";
 import { isIOSDevice } from "../util/displayOrientation";
 import { createPipPreview } from "../util/pipPreview";
+import { canRequestPip } from "../util/pipSupport";
 import {
   constrainScreenTrack,
   getScreenBounds,
@@ -22,11 +23,11 @@ import usePipStandby from "./usePipStandby";
 import useScreenOrientation from "./useScreenOrientation";
 import useVideoPresentation from "./useVideoPresentation";
 
+import type { SafariVideo } from "../util/pipSupport";
 import type {
   ScreenRotation,
   VideoPresentation,
 } from "../util/videoPresentation";
-import type { SafariVideo } from "./usePipStandby";
 
 export default function useCameraMode() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -170,8 +171,7 @@ export default function useCameraMode() {
   const needsPipStandby =
     source === "screen" &&
     isIOSDevice() &&
-    (Boolean(document.pictureInPictureEnabled) ||
-      "webkitSetPresentationMode" in HTMLVideoElement.prototype);
+    canRequestPip(videoRef.current, Boolean(document.pictureInPictureEnabled));
   const { standbyRef, ready: standbyReady } = usePipStandby({
     enabled: needsPipStandby,
     streamRef,
@@ -743,10 +743,7 @@ export default function useCameraMode() {
     if (!video) return;
     const updatePip = () => {
       setPipSupported(
-        Boolean(
-          (document.pictureInPictureEnabled && video.requestPictureInPicture) ||
-            video.webkitSupportsPresentationMode?.("picture-in-picture"),
-        ),
+        canRequestPip(video, Boolean(document.pictureInPictureEnabled)),
       );
       setPipActive(
         document.pictureInPictureElement === video ||
@@ -810,7 +807,7 @@ export default function useCameraMode() {
       }
       if (request !== pipRequestRef.current || streamRef.current !== original)
         return;
-      if (video.webkitSupportsPresentationMode?.("picture-in-picture")) {
+      if (typeof video.webkitSetPresentationMode === "function") {
         video.webkitSetPresentationMode?.("picture-in-picture");
         if (video.webkitPresentationMode !== "picture-in-picture") {
           await new Promise<void>((resolve, reject) => {
@@ -909,16 +906,13 @@ export default function useCameraMode() {
       isSwitching,
       screenSupported,
       pipSupported: needsPipStandby
-        ? Boolean(
-            standbyReady &&
-              (document.pictureInPictureEnabled ||
-                standbyRef.current?.video.webkitSupportsPresentationMode?.(
-                  "picture-in-picture",
-                )),
+        ? canRequestPip(
+            standbyRef.current?.video || null,
+            Boolean(document.pictureInPictureEnabled),
           )
         : pipSupported,
       previewReady:
-        previewReady && !pipPreparing && (!needsPipStandby || standbyReady),
+        !pipPreparing && (needsPipStandby ? standbyReady : previewReady),
       pipActive,
       showLeftUI,
       showPreview,
