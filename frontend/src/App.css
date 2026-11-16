@@ -133,3 +133,19 @@
   color: var(--text-color);
   border: 1px solid var(--text-color);
 }
+
+.right-control-panel button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.capture-error {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  right: 10px;
+  z-index: 20;
+  color: var(--text-red-color);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
