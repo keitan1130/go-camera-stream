@@ -14,7 +14,7 @@ Toyboxの開発ガイドを参考に、このリポジトリのGo / React / WebR
 ## 技術と配置
 
 - Go / Echo / Gorilla WebSocket。`main.go`がHTTP配信、`signaling.go`が接続仲介、`tls.go`がTLS設定です。
-- React / TypeScript / Vite。Node.jsは`frontend/.nvmrc`の26系、npmは`package.json`の指定に従います。
+- React / TypeScript / Vite。Node.jsは`frontend/.nvmrc`の26系、npmはNode.jsに同梱されたものを使用します。
 - モード単位の画面は`frontend/src/components/`、カメラモード固有の表示部品とProps型は`components/camera/`、配信処理と状態管理は`hooks/`に置きます。
 - 画面コンポーネントは表示部品の組み合わせを中心に保ち、通信・非同期処理を重複させません。単一画面の状態を安易にグローバル化しません。
 - コンポーネントと型はPascalCase、hookは`use`で始め、callback propsは`on`で始めます。既存の配置・命名を優先します。

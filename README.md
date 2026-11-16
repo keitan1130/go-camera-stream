@@ -99,14 +99,13 @@ Docker単体でビルドする場合は、`docker build --pull -t camera-stream 
 
 ## 開発環境（ローカル開発での起動）
 
-コードを直接編集しながら開発を行う場合の手順です。Go 1.27.4以上、Node.js 26、npm 12が必要です。
+コードを直接編集しながら開発を行う場合の手順です。Go 1.27.4以上とNode.js 26が必要です。npmはNode.jsに同梱されたものを使用します。
 
 ### 1. フロントエンド（React）のビルド
 
 ```bash
 cd frontend
 nvm use
-npm install --global npm@12.2.2
 npm ci
 npm run build
 cd ..

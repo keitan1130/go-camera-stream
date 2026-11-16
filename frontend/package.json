@@ -8,7 +8,6 @@
     "build": "tsc -b && vite build",
     "lint": "biome lint ./src",
     "preview": "vite preview",
-    "lint:fix": "biome lint --write ./src",
     "format": "biome check --write ./src ./biome.json ./package.json ./tsconfig.json ./tsconfig.app.json ./tsconfig.node.json ./vite.config.ts",
     "check": "biome check ./src ./biome.json ./package.json ./tsconfig.json ./tsconfig.app.json ./tsconfig.node.json ./vite.config.ts",
     "ci": "npm run check && npm run build"
@@ -27,8 +26,6 @@
     "@biomejs/biome": "2.6.8"
   },
   "engines": {
-    "node": "26.x",
-    "npm": "12.x"
-  },
-  "packageManager": "npm@12.2.2"
+    "node": "26.x"
+  }
 }

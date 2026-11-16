@@ -4,12 +4,11 @@ React 19 / TypeScript 7 / Vite 8を使用します。Lint・整形はBiome 2で�
 
 ## 開発環境
 
-Node.js 26とnpm 12が必要です。
+Node.js 26が必要です。npmはNode.jsに同梱されたものを使用します。
 `.nvmrc`はNode.jsの26系を指定しています。
 
 ```bash
 nvm use
-npm install --global npm@12.2.2
 npm ci
 ```
 
